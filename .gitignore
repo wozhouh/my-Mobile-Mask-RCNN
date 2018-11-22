@@ -1,3 +1,25 @@
+# Android
+*/gradleBuild/
+*.xml
+*.iml
+
+# temporary records
+*.log
+
+# Python data format
+*.npy
+*.pyc
+
+# trained weights
+*.pb
+
+# TensorBoard log
+*/events.*
+*.cesl-workstation
+
+# generated when training
+*/1024_*/
+
 # Data files and directories common in repo root
 datasets/
 logs/
@@ -39,6 +61,9 @@ pip-delete-this-directory.txt
 
 # PyCharm
 .idea/
+*/.idea/
+__pycache__/
+*/__pycache__/
 
 # Dropbox
 .dropbox.attr
