@@ -2290,7 +2290,7 @@ class MaskRCNN:
             #     _, C2, C3, C4, C5 = mobilenetv2_graph(input_image, config.BACKBONE, alpha=1.0, train_bn=config.TRAIN_BN)
 
         # Top-down Layers
-        # TODO: add assert to varify feature map sizes match what's in config
+        # TODO: add assert to verify feature map sizes match what's in config
         P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name='fpn_c5p5')(C5)
         P4 = KL.Add(name="fpn_p4add")([
             KL.UpSampling2D(size=(2, 2), name="fpn_p5upsampled")(P5),
