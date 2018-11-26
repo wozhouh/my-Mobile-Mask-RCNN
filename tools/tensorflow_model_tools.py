@@ -33,7 +33,7 @@ class ModelTools:
             print(op.values())
         # print(tf.get_default_graph().get_tensor_by_name("input_image:0"))
 
-    # list to announce the input and output tensors
+    # Note that different models have different requirements on 'input'
     def test_inference(self, img, input_tensors, output_tensors):
         img_raw = cv2.imread(img)
         session = tf.Session()

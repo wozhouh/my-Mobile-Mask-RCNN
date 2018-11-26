@@ -84,8 +84,8 @@ def compute_backbone_shapes(config, image_shape):
     if callable(config.BACKBONE):
         return config.COMPUTE_BACKBONE_SHAPE(image_shape)
 
-    # Currently supports ResNet only
-    assert config.BACKBONE in ["resnet50", "resnet101", "mobilenetv1", "mobilenetv2"]
+    # wozhouh: Currently supports the following model as backbone
+    assert config.BACKBONE in ["resnet50", "resnet101", "mobilenetv1", "mobilenetv2", "xception"]
     return np.array(
         [[int(math.ceil(image_shape[0] / stride)),
           int(math.ceil(image_shape[1] / stride))]
@@ -478,7 +478,7 @@ def _inverted_residual_block(inputs, filters, kernel, t, strides, n, alpha, bloc
     return x
 
 
-def mobilenetv2_graph(inputs, architecture, alpha=1.0, train_bn=False):
+def mobilenetv2_graph(inputs, architecture, alpha=1.0, stage5=True, train_bn=False):
     """MobileNetv2
     This function defines a MobileNetv2 architectures.
     # Arguments
@@ -491,15 +491,18 @@ def mobilenetv2_graph(inputs, architecture, alpha=1.0, train_bn=False):
     """
     assert architecture in ["mobilenetv2"]
 
-    x      = _conv_block(inputs, 32, alpha, (3, 3), strides=(2, 2), block_id=0, train_bn=train_bn)                      # Input Res: 1
-    C1 = x = _inverted_residual_block(x, 16,  (3, 3), t=1, strides=1, n=1, alpha=1.0, block_id=1, train_bn=train_bn)	# Input Res: 1/2
-    C2 = x = _inverted_residual_block(x, 24,  (3, 3), t=6, strides=2, n=2, alpha=1.0, block_id=2, train_bn=train_bn)	# Input Res: 1/2
-    C3 = x = _inverted_residual_block(x, 32,  (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=4, train_bn=train_bn)	# Input Res: 1/4
-    x      = _inverted_residual_block(x, 64,  (3, 3), t=6, strides=2, n=4, alpha=1.0, block_id=7, train_bn=train_bn)	# Input Res: 1/8
-    C4 = x = _inverted_residual_block(x, 96,  (3, 3), t=6, strides=1, n=3, alpha=1.0, block_id=11, train_bn=train_bn)	# Input Res: 1/8
-    x      = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14, train_bn=train_bn)	# Input Res: 1/16
-    C5 = x = _inverted_residual_block(x, 320, (3, 3), t=6, strides=1, n=1, alpha=1.0, block_id=17, train_bn=train_bn)	# Input Res: 1/32
-    # x = _conv_block(x, 1280, alpha, (1, 1), strides=(1, 1), block_id=18, train_bn=train_bn)                            # Input Res: 1/32
+    x      = _conv_block(inputs, 32, alpha, (3, 3), strides=(2, 2), block_id=0, train_bn=train_bn)  # output: N x 32 x 1/2 x 1/2
+    C1 = x = _inverted_residual_block(x, 16,  (3, 3), t=1, strides=1, n=1, alpha=1.0, block_id=1, train_bn=train_bn)  # output: N x 16 x 1/2 x 1/2
+    C2 = x = _inverted_residual_block(x, 24,  (3, 3), t=6, strides=2, n=2, alpha=1.0, block_id=2, train_bn=train_bn)  # output: N x 24 x 1/4 x 1/4
+    C3 = x = _inverted_residual_block(x, 32,  (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=4, train_bn=train_bn)  # output: N x 32 x 1/8 x 1/8
+    x      = _inverted_residual_block(x, 64,  (3, 3), t=6, strides=2, n=4, alpha=1.0, block_id=7, train_bn=train_bn)  # output: N x 64 x 1/16 x 1/16
+    C4 = x = _inverted_residual_block(x, 96,  (3, 3), t=6, strides=1, n=3, alpha=1.0, block_id=11, train_bn=train_bn)  # output: N x 96 x 1/16 x 1/16
+    x      = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14, train_bn=train_bn)  # output: N x 160 x 1/32 x 1/32
+    if stage5:
+        C5 = x = _inverted_residual_block(x, 320, (3, 3), t=6, strides=1, n=1, alpha=1.0, block_id=17, train_bn=train_bn)  # output: N x 320 x 1/32 x 1/32
+    else:
+        C5 = None
+    # x = _conv_block(x, 1280, alpha, (1, 1), strides=(1, 1), block_id=18, train_bn=train_bn)
 
     return [C1, C2, C3, C4, C5]
 
@@ -520,18 +523,19 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
         stage5: Boolean. If False, stage5 of the network is not created
         train_bn: Boolean. Train or freeze Batch Norm layers
     """
-    # Stage 0
+    # stage 1
     x = KL.Conv2D(32, (3, 3),
                   strides=(2, 2),
                   use_bias=False,
+                  padding='same',
                   name='block1_conv1')(input_image)
     x = KL.BatchNormalization(name='block1_conv1_bn')(x, training=train_bn)
     x = KL.Activation('relu', name='block1_conv1_act')(x)
-    x = KL.Conv2D(64, (3, 3), use_bias=False, name='block1_conv2')(x)
+    x = KL.Conv2D(64, (3, 3), use_bias=False, padding='same', name='block1_conv2')(x)
     x = KL.BatchNormalization(name='block1_conv2_bn')(x, training=train_bn)
-    C0 = x = KL.Activation('relu', name='block1_conv2_act')(x)  # output: N x 64 x 1/2 x 1/2
+    C1 = x = KL.Activation('relu', name='block1_conv2_act')(x)  # output: N x 64 x 1/2 x 1/2
 
-    # stage 1
+    # stage 2
     residual = KL.Conv2D(128, (1, 1),
                          strides=(2, 2),
                          padding='same',
@@ -554,9 +558,9 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
                         strides=(2, 2),
                         padding='same',
                         name='block2_pool')(x)
-    C1 = x = KL.add([x, residual])  # output: N x 128 x 1/4 x 1/4
+    C2 = x = KL.add([x, residual])  # output: N x 128 x 1/4 x 1/4
 
-    # stage 2
+    # stage 3
     residual = KL.Conv2D(256, (1, 1), strides=(2, 2),
                          padding='same', use_bias=False)(x)
     residual = KL.BatchNormalization()(residual, training=train_bn)
@@ -577,9 +581,9 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
     x = KL.MaxPooling2D((3, 3), strides=(2, 2),
                         padding='same',
                         name='block3_pool')(x)
-    C2 = x = KL.add([x, residual])  # output: N x 256 x 1/8 x 1/8
+    C3 = x = KL.add([x, residual])  # output: N x 256 x 1/8 x 1/8
 
-    # stage 3
+    # stage 4
     residual = KL.Conv2D(728, (1, 1),
                          strides=(2, 2),
                          padding='same',
@@ -629,39 +633,38 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
 
         x = KL.add([x, residual])
 
-    C3 = x  # output: N x 728 x 1/16 x 1/16
+    C4 = x  # output: N x 728 x 1/16 x 1/16
 
-    # stage 4
-    residual = KL.Conv2D(1024, (1, 1), strides=(2, 2),
-                         padding='same', use_bias=False)(x)
-    residual = KL.BatchNormalization()(residual, training=train_bn)
-
-    x = KL.Activation('relu', name='block13_sepconv1_act')(x)
-    x = KL.SeparableConv2D(728, (3, 3),
-                           padding='same',
-                           use_bias=False,
-                           name='block13_sepconv1')(x)
-    x = KL.BatchNormalization(name='block13_sepconv1_bn')(x, training=train_bn)
-    x = KL.Activation('relu', name='block13_sepconv2_act')(x)
-    x = KL.SeparableConv2D(1024, (3, 3),
-                           padding='same',
-                           use_bias=False,
-                           name='block13_sepconv2')(x)
-    x = KL.BatchNormalization(name='block13_sepconv2_bn')(x, training=train_bn)
-
-    x = KL.MaxPooling2D((3, 3),
-                        strides=(2, 2),
-                        padding='same',
-                        name='block13_pool')(x)
-    C4 = x = KL.add([x, residual])  # output: N x 1024 x 1/32 x 1/32
-    
     # stage 5
     if stage5:
+        residual = KL.Conv2D(1024, (1, 1), strides=(2, 2),
+                             padding='same', use_bias=False)(x)
+        residual = KL.BatchNormalization()(residual, training=train_bn)
+
+        x = KL.Activation('relu', name='block13_sepconv1_act')(x)
+        x = KL.SeparableConv2D(728, (3, 3),
+                               padding='same',
+                               use_bias=False,
+                               name='block13_sepconv1')(x)
+        x = KL.BatchNormalization(name='block13_sepconv1_bn')(x, training=train_bn)
+        x = KL.Activation('relu', name='block13_sepconv2_act')(x)
+        x = KL.SeparableConv2D(1024, (3, 3),
+                               padding='same',
+                               use_bias=False,
+                               name='block13_sepconv2')(x)
+        x = KL.BatchNormalization(name='block13_sepconv2_bn')(x, training=train_bn)
+
+        x = KL.MaxPooling2D((3, 3),
+                            strides=(2, 2),
+                            padding='same',
+                            name='block13_pool')(x)
+        x = KL.add([x, residual])
+
         x = KL.SeparableConv2D(1536, (3, 3),
                                padding='same',
                                use_bias=False,
-                               name='block14_sepconv1')(x, training=train_bn)
-        x = KL.BatchNormalization(name='block14_sepconv1_bn')(x)
+                               name='block14_sepconv1')(x)
+        x = KL.BatchNormalization(name='block14_sepconv1_bn')(x, training=train_bn)
         x = KL.Activation('relu', name='block14_sepconv1_act')(x)
 
         x = KL.SeparableConv2D(2048, (3, 3),
@@ -669,7 +672,7 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
                                use_bias=False,
                                name='block14_sepconv2')(x)
         x = KL.BatchNormalization(name='block14_sepconv2_bn')(x, training=train_bn)
-        C5 = x = KL.Activation('relu', name='block14_sepconv2_act')(x)  # output: N x 2048 x 1/64 x 1/64
+        C5 = x = KL.Activation('relu', name='block14_sepconv2_act')(x)  # output: N x 2048 x 1/32 x 1/32
     else:
         C5 = None
 
@@ -1477,7 +1480,7 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
     # ROI Pooling
     # Shape: [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, channels]
 
-    assert backbone in ['resnet50', 'resnet101', 'mobilenetv1', 'mobilenetv2']
+    # assert backbone in ['resnet50', 'resnet101', 'mobilenetv1', 'mobilenetv2']
 
     x = PyramidROIAlign([pool_size, pool_size],
                         name="roi_align_mask")([rois, image_meta] + feature_maps)
@@ -2662,11 +2665,12 @@ class MaskRCNN:
         Returns path to weights file.
         """
         from keras.utils.data_utils import get_file
+        weight_path = ""
         if self.config.BACKBONE in ["resnet50"]:
             TF_WEIGHTS_PATH = 'https://github.com/fchollet/deep-learning-models/' \
                               'releases/download/v0.2/' \
                               'resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5'
-            return get_file('resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5',
+            weight_path = get_file('resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5',
                             TF_WEIGHTS_PATH,
                             cache_subdir='models',
                             md5_hash='a268eb855778b3df3c7506639542a6af')
@@ -2674,14 +2678,14 @@ class MaskRCNN:
             TF_WEIGHTS_PATH = 'https://github.com/fchollet/deep-learning-models/' \
                               'releases/download/v0.6/' \
                               'mobilenet_1_0_224_tf_no_top.h5'
-            return get_file('mobilenet_1_0_224_tf_no_top.h5',
+            weight_path = get_file('mobilenet_1_0_224_tf_no_top.h5',
                             TF_WEIGHTS_PATH,
                             cache_subdir='models',
-                            md5_hash='725ccbd03d61d7ced5b5c4cd17e7d527'
+                            md5_hash='725ccbd03d61d7ced5b5c4cd17e7d527')
 
-        # TODO: url for Xception needed further
+        # TODO: url for MobileNet-v2 and Xception needed further
 
-        return None
+        return weight_path
 
     def compile(self, learning_rate, momentum):
         """Gets the model ready for training. Adds losses, regularization, and
