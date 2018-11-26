@@ -5,6 +5,8 @@ Base Configurations class.
 Copyright (c) 2017 Matterport, Inc.
 Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
+
+modified by wozhouh
 """
 
 import numpy as np
@@ -52,8 +54,8 @@ class Config(object):
     # You can also provide a callable that should have the signature
     # of model.resnet_graph. If you do so, you need to supply a callable
     # to COMPUTE_BACKBONE_SHAPE as well
-    # wozhouh: add support for 'mobilenetv1' and 'mobilenetv2'
-    # wozhouh: currently support ['resnet50', 'resnet101', 'mobilenetv1', 'mobilenetv2', 'xception', 'mnasnet']
+    # wozhouh: add support for "mobilenetv1", "mobilenetv2"
+    # wozhouh: currently support ["resnet50", "resnet101", "mobilenetv1", "mobilenetv2", "xception"]
     BACKBONE = "resnet101"
 
     # Only useful if you supply a callable to BACKBONE. Should compute

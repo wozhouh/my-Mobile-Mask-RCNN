@@ -393,166 +393,287 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
 
 
 ############################################################
+#  MobileNetV2 Graph
+############################################################
+
+# wozhouh: Backbone of MobileNet-v2
+# Code adopted from:
+# https://github.com/xiaochus/MobileNetV2/blob/master/mobilenet_v2.py
+
+"""MobileNet v2 models for Keras.
+# Reference
+- [Inverted Residuals and Linear Bottlenecks Mobile Networks for
+   Classification, Detection and Segmentation]
+   (https://arxiv.org/abs/1801.04381)
+"""
+
+def _bottleneck(inputs, filters, kernel, t, s, r=False, alpha=1.0, block_id=1, train_bn = False):
+    """Bottleneck
+    This function defines a basic bottleneck structure.
+    # Arguments
+        inputs: Tensor, input tensor of conv layer.
+        filters: Integer, the dimensionality of the output space.
+        kernel: An integer or tuple/list of 2 integers, specifying the
+            width and height of the 2D convolution window.
+        t: Integer, expansion factor.
+            t is always applied to the input size.
+        s: An integer or tuple/list of 2 integers,specifying the strides
+            of the convolution along the width and height.Can be a single
+            integer to specify the same value for all spatial dimensions.
+        r: Boolean, Whether to use the residuals.
+    # Returns
+        Output tensor.
+    """
+
+    channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
+    tchannel = K.int_shape(inputs)[channel_axis] * t
+    filters = int(alpha * filters)
+
+    x = _conv_block(inputs, tchannel, alpha, (1, 1), (1, 1),block_id=block_id,train_bn=train_bn)
+
+    x = KL.DepthwiseConv2D(kernel,
+                    strides=(s, s),
+                    depth_multiplier=1,
+                    padding='same',
+                    name='conv_dw_{}'.format(block_id))(x)
+    x = BatchNorm(axis=channel_axis,name='conv_dw_{}_bn'.format(block_id))(x, training=train_bn)
+    x = KL.Activation(relu6, name='conv_dw_{}_relu'.format(block_id))(x)
+
+    x = KL.Conv2D(filters,
+                    (1, 1),
+                    strides=(1, 1),
+                    padding='same',
+                    name='conv_pw_{}'.format(block_id))(x)
+    x = BatchNorm(axis=channel_axis, name='conv_pw_{}_bn'.format(block_id))(x, training=train_bn)
+
+    if r:
+        x = KL.add([x, inputs], name='res{}'.format(block_id))
+    return x
+
+
+def _inverted_residual_block(inputs, filters, kernel, t, strides, n, alpha, block_id, train_bn):
+    """Inverted Residual Block
+    This function defines a sequence of 1 or more identical layers.
+    # Arguments
+        inputs: Tensor, input tensor of conv layer.
+        filters: Integer, the dimensionality of the output space.
+        kernel: An integer or tuple/list of 2 integers, specifying the
+            width and height of the 2D convolution window.
+        t: Integer, expansion factor.
+            t is always applied to the input size.
+        s: An integer or tuple/list of 2 integers,specifying the strides
+            of the convolution along the width and height.Can be a single
+            integer to specify the same value for all spatial dimensions.
+        n: Integer, layer repeat times.
+    # Returns
+        Output tensor.
+    """
+
+    x = _bottleneck(inputs, filters, kernel, t, strides, False, alpha, block_id, train_bn)
+
+    for i in range(1, n):
+        block_id += 1
+        x = _bottleneck(x, filters, kernel, t, 1, True, alpha, block_id, train_bn)
+
+    return x
+
+
+def mobilenetv2_graph(inputs, architecture, alpha=1.0, train_bn=False):
+    """MobileNetv2
+    This function defines a MobileNetv2 architectures.
+    # Arguments
+        inputs: Inuput Tensor, e.g. an image
+        architecture: to preserve consistency
+        alpha: Width Multiplier
+        train_bn: Boolean. Train or freeze Batch Norm layres
+    # Returns
+        five MobileNetv2 model stages.
+    """
+    assert architecture in ["mobilenetv2"]
+
+    x      = _conv_block(inputs, 32, alpha, (3, 3), strides=(2, 2), block_id=0, train_bn=train_bn)                      # Input Res: 1
+    C1 = x = _inverted_residual_block(x, 16,  (3, 3), t=1, strides=1, n=1, alpha=1.0, block_id=1, train_bn=train_bn)	# Input Res: 1/2
+    C2 = x = _inverted_residual_block(x, 24,  (3, 3), t=6, strides=2, n=2, alpha=1.0, block_id=2, train_bn=train_bn)	# Input Res: 1/2
+    C3 = x = _inverted_residual_block(x, 32,  (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=4, train_bn=train_bn)	# Input Res: 1/4
+    x      = _inverted_residual_block(x, 64,  (3, 3), t=6, strides=2, n=4, alpha=1.0, block_id=7, train_bn=train_bn)	# Input Res: 1/8
+    C4 = x = _inverted_residual_block(x, 96,  (3, 3), t=6, strides=1, n=3, alpha=1.0, block_id=11, train_bn=train_bn)	# Input Res: 1/8
+    x      = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14, train_bn=train_bn)	# Input Res: 1/16
+    C5 = x = _inverted_residual_block(x, 320, (3, 3), t=6, strides=1, n=1, alpha=1.0, block_id=17, train_bn=train_bn)	# Input Res: 1/32
+    # x = _conv_block(x, 1280, alpha, (1, 1), strides=(1, 1), block_id=18, train_bn=train_bn)                            # Input Res: 1/32
+
+    return [C1, C2, C3, C4, C5]
+
+
+############################################################
 #  Xception Graph
 ############################################################
 
-# def xception_graph(input_image, architecture, stage5=True, train_bn=False):
-#     """Instantiates the Xception architecture.
-#     # Arguments
-#         input_image: Inuput Tensor, e.g. an image
-#         architecture: to preserve consistency
-#         stage5: Boolean. If False, stage5 of the network is not created
-#         train_bn: Boolean. Train or freeze Batch Norm layers
-#     """
-#     # Stage 0
-#     x = KL.Conv2D(32, (3, 3),
-#                   strides=(2, 2),
-#                   use_bias=False,
-#                   name='block1_conv1')(input_image)
-#     x = KL.BatchNormalization(name='block1_conv1_bn')(x)
-#     x = KL.Activation('relu', name='block1_conv1_act')(x)
-#     x = KL.Conv2D(64, (3, 3), use_bias=False, name='block1_conv2')(x)
-#     x = KL.BatchNormalization(name='block1_conv2_bn')(x)
-#     C1 = x = KL.Activation('relu', name='block1_conv2_act')(x)
-#
-#     # stage 2
-#     residual = KL.Conv2D(128, (1, 1),
-#                          strides=(2, 2),
-#                          padding='same',
-#                          use_bias=False)(x)
-#     residual = KL.BatchNormalization()(residual)
-#
-#     x = KL.SeparableConv2D(128, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block2_sepconv1')(x)
-#     x = KL.BatchNormalization(name='block2_sepconv1_bn')(x)
-#     x = KL.Activation('relu', name='block2_sepconv2_act')(x)
-#     x = KL.SeparableConv2D(128, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block2_sepconv2')(x)
-#     x = KL.BatchNormalization(name='block2_sepconv2_bn')(x)
-#
-#     x = KL.MaxPooling2D((3, 3),
-#                         strides=(2, 2),
-#                         padding='same',
-#                         name='block2_pool')(x)
-#     C2 = x = KL.add([x, residual])
-#
-#     # stage 3
-#     residual = KL.Conv2D(256, (1, 1), strides=(2, 2),
-#                          padding='same', use_bias=False)(x)
-#     residual = KL.BatchNormalization()(residual)
-#
-#     x = KL.Activation('relu', name='block3_sepconv1_act')(x)
-#     x = KL.SeparableConv2D(256, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block3_sepconv1')(x)
-#     x = KL.BatchNormalization(name='block3_sepconv1_bn')(x)
-#     x = KL.Activation('relu', name='block3_sepconv2_act')(x)
-#     x = KL.SeparableConv2D(256, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block3_sepconv2')(x)
-#     x = KL.BatchNormalization(name='block3_sepconv2_bn')(x)
-#
-#     x = KL.MaxPooling2D((3, 3), strides=(2, 2),
-#                         padding='same',
-#                         name='block3_pool')(x)
-#     C3 = x = KL.add([x, residual])
-#
-#     # stage 4
-#     residual = KL.Conv2D(728, (1, 1),
-#                          strides=(2, 2),
-#                          padding='same',
-#                          use_bias=False)(x)
-#     residual = KL.BatchNormalization()(residual)
-#
-#     x = KL.Activation('relu', name='block4_sepconv1_act')(x)
-#     x = KL.SeparableConv2D(728, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block4_sepconv1')(x)
-#     x = KL.BatchNormalization(name='block4_sepconv1_bn')(x)
-#     x = KL.Activation('relu', name='block4_sepconv2_act')(x)
-#     x = KL.SeparableConv2D(728, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block4_sepconv2')(x)
-#     x = KL.BatchNormalization(name='block4_sepconv2_bn')(x)
-#
-#     x = KL.MaxPooling2D((3, 3), strides=(2, 2),
-#                         padding='same',
-#                         name='block4_pool')(x)
-#     x = KL.add([x, residual])
-#
-#     for i in range(8):
-#         residual = x
-#         prefix = 'block' + str(i + 5)
-#
-#         x = KL.Activation('relu', name=prefix + '_sepconv1_act')(x)
-#         x = KL.SeparableConv2D(728, (3, 3),
-#                                padding='same',
-#                                use_bias=False,
-#                                name=prefix + '_sepconv1')(x)
-#         x = KL.BatchNormalization(name=prefix + '_sepconv1_bn')(x)
-#         x = KL.Activation('relu', name=prefix + '_sepconv2_act')(x)
-#         x = KL.SeparableConv2D(728, (3, 3),
-#                                padding='same',
-#                                use_bias=False,
-#                                name=prefix + '_sepconv2')(x)
-#         x = KL.BatchNormalization(name=prefix + '_sepconv2_bn')(x)
-#         x = KL.Activation('relu', name=prefix + '_sepconv3_act')(x)
-#         x = KL.SeparableConv2D(728, (3, 3),
-#                                padding='same',
-#                                use_bias=False,
-#                                name=prefix + '_sepconv3')(x)
-#         x = KL.BatchNormalization(name=prefix + '_sepconv3_bn')(x)
-#
-#         x = KL.add([x, residual])
-#
-#     C4 = x
-#
-#     # stage 5
-#     residual = KL.Conv2D(1024, (1, 1), strides=(2, 2),
-#                          padding='same', use_bias=False)(x)
-#     residual = KL.BatchNormalization()(residual)
-#
-#     x = KL.Activation('relu', name='block13_sepconv1_act')(x)
-#     x = KL.SeparableConv2D(728, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block13_sepconv1')(x)
-#     x = KL.BatchNormalization(name='block13_sepconv1_bn')(x)
-#     x = KL.Activation('relu', name='block13_sepconv2_act')(x)
-#     x = KL.SeparableConv2D(1024, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block13_sepconv2')(x)
-#     x = KL.BatchNormalization(name='block13_sepconv2_bn')(x)
-#
-#     # stage 6
-#     x = KL.MaxPooling2D((3, 3),
-#                         strides=(2, 2),
-#                         padding='same',
-#                         name='block13_pool')(x)
-#     x = KL.add([x, residual])
-#
-#     x = KL.SeparableConv2D(1536, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block14_sepconv1')(x)
-#     x = KL.BatchNormalization(name='block14_sepconv1_bn')(x)
-#     x = KL.Activation('relu', name='block14_sepconv1_act')(x)
-#
-#     x = KL.SeparableConv2D(2048, (3, 3),
-#                            padding='same',
-#                            use_bias=False,
-#                            name='block14_sepconv2')(x)
-#     x = KL.BatchNormalization(name='block14_sepconv2_bn')(x)
-#     x = KL.Activation('relu', name='block14_sepconv2_act')(x)
+# wozhouh: Backbone of Xception
+# Code adopted from:
+# https://github.com/keras-team/keras-applications/blob/master/keras_applications/xception.py
+
+def xception_graph(input_image, architecture, stage5=True, train_bn=False):
+    """Instantiates the Xception architecture.
+    # Arguments
+        input_image: Inuput Tensor, e.g. an image
+        architecture: to preserve consistency
+        stage5: Boolean. If False, stage5 of the network is not created
+        train_bn: Boolean. Train or freeze Batch Norm layers
+    """
+    # Stage 0
+    x = KL.Conv2D(32, (3, 3),
+                  strides=(2, 2),
+                  use_bias=False,
+                  name='block1_conv1')(input_image)
+    x = KL.BatchNormalization(name='block1_conv1_bn')(x, training=train_bn)
+    x = KL.Activation('relu', name='block1_conv1_act')(x)
+    x = KL.Conv2D(64, (3, 3), use_bias=False, name='block1_conv2')(x)
+    x = KL.BatchNormalization(name='block1_conv2_bn')(x, training=train_bn)
+    C0 = x = KL.Activation('relu', name='block1_conv2_act')(x)  # output: N x 64 x 1/2 x 1/2
+
+    # stage 1
+    residual = KL.Conv2D(128, (1, 1),
+                         strides=(2, 2),
+                         padding='same',
+                         use_bias=False)(x)
+    residual = KL.BatchNormalization()(residual, training=train_bn)
+
+    x = KL.SeparableConv2D(128, (3, 3),
+                           padding='same',
+                           use_bias=False,
+                           name='block2_sepconv1')(x)
+    x = KL.BatchNormalization(name='block2_sepconv1_bn')(x, training=train_bn)
+    x = KL.Activation('relu', name='block2_sepconv2_act')(x)
+    x = KL.SeparableConv2D(128, (3, 3),
+                           padding='same',
+                           use_bias=False,
+                           name='block2_sepconv2')(x)
+    x = KL.BatchNormalization(name='block2_sepconv2_bn')(x, training=train_bn)
+
+    x = KL.MaxPooling2D((3, 3),
+                        strides=(2, 2),
+                        padding='same',
+                        name='block2_pool')(x)
+    C1 = x = KL.add([x, residual])  # output: N x 128 x 1/4 x 1/4
+
+    # stage 2
+    residual = KL.Conv2D(256, (1, 1), strides=(2, 2),
+                         padding='same', use_bias=False)(x)
+    residual = KL.BatchNormalization()(residual, training=train_bn)
+
+    x = KL.Activation('relu', name='block3_sepconv1_act')(x)
+    x = KL.SeparableConv2D(256, (3, 3),
+                           padding='same',
+                           use_bias=False,
+                           name='block3_sepconv1')(x)
+    x = KL.BatchNormalization(name='block3_sepconv1_bn')(x, training=train_bn)
+    x = KL.Activation('relu', name='block3_sepconv2_act')(x)
+    x = KL.SeparableConv2D(256, (3, 3),
+                           padding='same',
+                           use_bias=False,
+                           name='block3_sepconv2')(x)
+    x = KL.BatchNormalization(name='block3_sepconv2_bn')(x, training=train_bn)
+
+    x = KL.MaxPooling2D((3, 3), strides=(2, 2),
+                        padding='same',
+                        name='block3_pool')(x)
+    C2 = x = KL.add([x, residual])  # output: N x 256 x 1/8 x 1/8
+
+    # stage 3
+    residual = KL.Conv2D(728, (1, 1),
+                         strides=(2, 2),
+                         padding='same',
+                         use_bias=False)(x)
+    residual = KL.BatchNormalization()(residual, training=train_bn)
+
+    x = KL.Activation('relu', name='block4_sepconv1_act')(x)
+    x = KL.SeparableConv2D(728, (3, 3),
+                           padding='same',
+                           use_bias=False,
+                           name='block4_sepconv1')(x)
+    x = KL.BatchNormalization(name='block4_sepconv1_bn')(x, training=train_bn)
+    x = KL.Activation('relu', name='block4_sepconv2_act')(x)
+    x = KL.SeparableConv2D(728, (3, 3),
+                           padding='same',
+                           use_bias=False,
+                           name='block4_sepconv2')(x)
+    x = KL.BatchNormalization(name='block4_sepconv2_bn')(x, training=train_bn)
+
+    x = KL.MaxPooling2D((3, 3), strides=(2, 2),
+                        padding='same',
+                        name='block4_pool')(x)
+    x = KL.add([x, residual])
+
+    for i in range(8):
+        residual = x
+        prefix = 'block' + str(i + 5)
+
+        x = KL.Activation('relu', name=prefix + '_sepconv1_act')(x)
+        x = KL.SeparableConv2D(728, (3, 3),
+                               padding='same',
+                               use_bias=False,
+                               name=prefix + '_sepconv1')(x)
+        x = KL.BatchNormalization(name=prefix + '_sepconv1_bn')(x, training=train_bn)
+        x = KL.Activation('relu', name=prefix + '_sepconv2_act')(x)
+        x = KL.SeparableConv2D(728, (3, 3),
+                               padding='same',
+                               use_bias=False,
+                               name=prefix + '_sepconv2')(x)
+        x = KL.BatchNormalization(name=prefix + '_sepconv2_bn')(x, training=train_bn)
+        x = KL.Activation('relu', name=prefix + '_sepconv3_act')(x)
+        x = KL.SeparableConv2D(728, (3, 3),
+                               padding='same',
+                               use_bias=False,
+                               name=prefix + '_sepconv3')(x)
+        x = KL.BatchNormalization(name=prefix + '_sepconv3_bn')(x, training=train_bn)
+
+        x = KL.add([x, residual])
+
+    C3 = x  # output: N x 728 x 1/16 x 1/16
+
+    # stage 4
+    residual = KL.Conv2D(1024, (1, 1), strides=(2, 2),
+                         padding='same', use_bias=False)(x)
+    residual = KL.BatchNormalization()(residual, training=train_bn)
+
+    x = KL.Activation('relu', name='block13_sepconv1_act')(x)
+    x = KL.SeparableConv2D(728, (3, 3),
+                           padding='same',
+                           use_bias=False,
+                           name='block13_sepconv1')(x)
+    x = KL.BatchNormalization(name='block13_sepconv1_bn')(x, training=train_bn)
+    x = KL.Activation('relu', name='block13_sepconv2_act')(x)
+    x = KL.SeparableConv2D(1024, (3, 3),
+                           padding='same',
+                           use_bias=False,
+                           name='block13_sepconv2')(x)
+    x = KL.BatchNormalization(name='block13_sepconv2_bn')(x, training=train_bn)
+
+    x = KL.MaxPooling2D((3, 3),
+                        strides=(2, 2),
+                        padding='same',
+                        name='block13_pool')(x)
+    C4 = x = KL.add([x, residual])  # output: N x 1024 x 1/32 x 1/32
+    
+    # stage 5
+    if stage5:
+        x = KL.SeparableConv2D(1536, (3, 3),
+                               padding='same',
+                               use_bias=False,
+                               name='block14_sepconv1')(x, training=train_bn)
+        x = KL.BatchNormalization(name='block14_sepconv1_bn')(x)
+        x = KL.Activation('relu', name='block14_sepconv1_act')(x)
+
+        x = KL.SeparableConv2D(2048, (3, 3),
+                               padding='same',
+                               use_bias=False,
+                               name='block14_sepconv2')(x)
+        x = KL.BatchNormalization(name='block14_sepconv2_bn')(x, training=train_bn)
+        C5 = x = KL.Activation('relu', name='block14_sepconv2_act')(x)  # output: N x 2048 x 1/64 x 1/64
+    else:
+        C5 = None
+
+    return [C1, C2, C3, C4, C5]
 
 
 ############################################################
@@ -1303,8 +1424,8 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
 
 
-# wozhouh: add support for heads of MobileNet-based Mask-RCNN
-def _timedistributed_depthwise_conv_block(inputs, pointwise_conv_filters, strides=(1, 1), block_id=1, train_bn=False):
+# wozhouh: add support for conv at heads of MobileNet/Xception-based Mask-RCNN
+def _timedistributed_separable_conv_block(inputs, pointwise_conv_filters, strides=(1, 1), block_id=1, train_bn=False):
     """Similiar to the _depthwise_conv_block used in the Backbone,
     but with each layer wrapped in a TimeDistributed layer,
     used to build the computation graph of the mask head of the FPN.
@@ -1322,6 +1443,7 @@ def _timedistributed_depthwise_conv_block(inputs, pointwise_conv_filters, stride
     x = KL.TimeDistributed(BatchNorm(axis=channel_axis),
                            name='mrcnn_mask_conv_dw_{}_bn'.format(block_id))(x, training=train_bn)
     x = KL.Activation(relu6, name='mrcnn_mask_conv_dw_{}_relu'.format(block_id))(x)
+
     # point-wise
     x = KL.TimeDistributed(KL.Conv2D(pointwise_conv_filters,
                                      (1, 1),
@@ -1332,6 +1454,7 @@ def _timedistributed_depthwise_conv_block(inputs, pointwise_conv_filters, stride
     x = KL.TimeDistributed(BatchNorm(
         axis=channel_axis),
         name='mrcnn_mask_conv_pw_{}_bn'.format(block_id))(x, training=train_bn)
+
     return KL.Activation(relu6, name='mrcnn_mask_conv_pw_{}_relu'.format(block_id))(x)
 
 
@@ -1377,15 +1500,16 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
         x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn4')(x, training=train_bn)
         x = KL.Activation('relu')(x)
 
-    # Mobilenet
-    elif backbone in ['mobilenetv1', 'mobilenetv2']:
-        x = _timedistributed_depthwise_conv_block(x, 256, block_id=1, train_bn=train_bn)
-        x = _timedistributed_depthwise_conv_block(x, 256, block_id=2, train_bn=train_bn)
-        x = _timedistributed_depthwise_conv_block(x, 256, block_id=3, train_bn=train_bn)
-        x = _timedistributed_depthwise_conv_block(x, 256, block_id=4, train_bn=train_bn)
+    # Mobilenet/Xception
+    elif backbone in ['mobilenetv1', 'mobilenetv2', 'xception']:
+        x = _timedistributed_separable_conv_block(x, 256, block_id=1, train_bn=train_bn)
+        x = _timedistributed_separable_conv_block(x, 256, block_id=2, train_bn=train_bn)
+        x = _timedistributed_separable_conv_block(x, 256, block_id=3, train_bn=train_bn)
+        x = _timedistributed_separable_conv_block(x, 256, block_id=4, train_bn=train_bn)
 
     x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"), name="mrcnn_mask_deconv")(x)
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"), name="mrcnn_mask")(x)
+
     return x
 
 
@@ -2283,11 +2407,15 @@ class MaskRCNN:
         else:
             if config.BACKBONE in ["resnet50", "resnet101"]:
                 _, C2, C3, C4, C5 = resnet_graph(input_image, config.BACKBONE, stage5=True, train_bn=config.TRAIN_BN)
+
             elif config.BACKBONE in ["mobilenetv1"]:
-                _, C2, C3, C4, C5 = mobilenetv1_graph(input_image, config.BACKBONE, alpha=1.0, stage5=True,
-                                                      train_bn=config.TRAIN_BN)
-            # elif config.BACKBONE in ["mobilenetv2"]:
-            #     _, C2, C3, C4, C5 = mobilenetv2_graph(input_image, config.BACKBONE, alpha=1.0, train_bn=config.TRAIN_BN)
+                _, C2, C3, C4, C5 = mobilenetv1_graph(input_image, config.BACKBONE, alpha=1.0, stage5=True, train_bn=config.TRAIN_BN)
+
+            elif config.BACKBONE in ["mobilenetv2"]:
+                _, C2, C3, C4, C5 = mobilenetv2_graph(input_image, config.BACKBONE, alpha=1.0, stage5=True, train_bn=config.TRAIN_BN)
+
+            elif config.BACKBONE in ["xception"]:
+                _, C2, C3, C4, C5 = xception_graph(input_image, config.BACKBONE, stage5=True, train_bn=config.TRAIN_BN)
 
         # Top-down Layers
         # TODO: add assert to verify feature map sizes match what's in config
@@ -2549,7 +2677,10 @@ class MaskRCNN:
             return get_file('mobilenet_1_0_224_tf_no_top.h5',
                             TF_WEIGHTS_PATH,
                             cache_subdir='models',
-                            md5_hash='725ccbd03d61d7ced5b5c4cd17e7d527')
+                            md5_hash='725ccbd03d61d7ced5b5c4cd17e7d527'
+
+        # TODO: url for Xception needed further
+
         return None
 
     def compile(self, learning_rate, momentum):
@@ -3227,7 +3358,7 @@ def mold_image(images, config):
     """
 
     # TensorFlow implementation of MobileNet-v1 requires the pixels of the input image scaled between [-1, 1]
-    if config.BACKBONE in ["mobilenetv1", "mobilenetv2"]:
+    if config.BACKBONE in ["mobilenetv1", "mobilenetv2", "xception"]:
         return images.astype(np.float32) / 127.5 - 1.0
 
     return images.astype(np.float32) - config.MEAN_PIXEL
@@ -3236,7 +3367,7 @@ def mold_image(images, config):
 # wozhouh: reverse of 'mold_image'
 def unmold_image(normalized_images, config):
     """Takes a image normalized with mold() and returns the original."""
-    if config.BACKBONE in ["mobilenetv1", "mobilenetv2"]:
+    if config.BACKBONE in ["mobilenetv1", "mobilenetv2", "xception"]:
         return ((normalized_images + 1) * 127.5).astype(np.uint8)
 
     return (normalized_images + config.MEAN_PIXEL).astype(np.uint8)
