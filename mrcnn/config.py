@@ -52,8 +52,7 @@ class Config(object):
     # You can also provide a callable that should have the signature
     # of model.resnet_graph. If you do so, you need to supply a callable
     # to COMPUTE_BACKBONE_SHAPE as well
-    # wozhouh: add support for "mobilenetv1", "mobilenetv2"
-    # wozhouh: currently support ["resnet50", "resnet101", "mobilenetv1", "mobilenetv2", "xception", "mnasnet"]
+    # wozhouh: currently support ["resnet50", "resnet101", "mobilenetv1", "mobilenetv2", "xception"]
     BACKBONE = "resnet101"
 
     # Only useful if you supply a callable to BACKBONE. Should compute
@@ -62,7 +61,7 @@ class Config(object):
     COMPUTE_BACKBONE_SHAPE = None
 
     # The strides of each layer of the FPN Pyramid. These values
-    # are based on a Resnet101 backbone.
+    # are based on a ResNet-101 backbone.
     BACKBONE_STRIDES = [4, 8, 16, 32, 64]
 
     # Size of the fully-connected layers in the classification graph
