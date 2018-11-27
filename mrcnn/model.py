@@ -2882,15 +2882,15 @@ class MaskRCNN:
                 "4+": r"(conv.*11.*)|(conv.*12.*)|(bn4.*)|(mob5.*)|(bn5.*)|"
                       r"(conv.*13.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
                 "5+": r"(conv.*13.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"}
-        # elif self.config.BACKBONE in ["mobilenetv2"]:
-        #     # From a specific Mobilenetv2 stage and up
-        #     stage_regex = {
-        #         "3+": r"(conv.*6.*)|(conv.*7.*)|(conv.*8.*)|(conv.*9.*)|(conv.*10.*)|(conv.*11.*)|(conv.*12.*)|"
-        #               r"(conv.*13.*)|(conv.*14.*)|(conv.*15.*)|(conv.*16.*)|"
-        #               r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|("r"fpn\_.*)",
-        #         "4+": r"(conv.*13.*)|(conv.*14.*)|(conv.*15.*)|(conv.*16.*)|"
-        #               r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|("r"fpn\_.*)",
-        #         "5+": r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"}
+        elif self.config.BACKBONE in ["mobilenetv2"]:
+            # From a specific Mobilenetv2 stage and up
+            stage_regex = {
+                "3+": r"(conv.*6.*)|(conv.*7.*)|(conv.*8.*)|(conv.*9.*)|(conv.*10.*)|(conv.*11.*)|(conv.*12.*)|"
+                      r"(conv.*13.*)|(conv.*14.*)|(conv.*15.*)|(conv.*16.*)|"
+                      r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|("r"fpn\_.*)",
+                "4+": r"(conv.*13.*)|(conv.*14.*)|(conv.*15.*)|(conv.*16.*)|"
+                      r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|("r"fpn\_.*)",
+                "5+": r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"}
 
         layer_regex.update(stage_regex)
 
