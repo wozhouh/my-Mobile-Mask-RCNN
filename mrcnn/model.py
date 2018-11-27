@@ -27,9 +27,6 @@ import keras.models as KM
 
 from mrcnn import utils
 
-# import for MobileNet support
-import keras.regularizers as KR
-
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
 
@@ -85,7 +82,7 @@ def compute_backbone_shapes(config, image_shape):
         return config.COMPUTE_BACKBONE_SHAPE(image_shape)
 
     # wozhouh: Currently supports the following model as backbone
-    assert config.BACKBONE in ["resnet50", "resnet101", "mobilenetv1", "mobilenetv2", "xception"]
+    assert config.BACKBONE in ["resnet50", "resnet101", "mobilenetv1", "mobilenetv2", "xception", "mnasnet"]
     return np.array(
         [[int(math.ceil(image_shape[0] / stride)),
           int(math.ceil(image_shape[1] / stride))]
@@ -199,7 +196,8 @@ def resnet_graph(input_image, architecture, stage5=True, train_bn=True):
     x = conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn)
     x = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn)
     x = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn)
-    C3 = x = identity_block(x, 3, [128, 128, 512], stage=3, block='d', train_bn=train_bn)  # output: N x 512 x 1/16 x 1/16
+    C3 = x = identity_block(x, 3, [128, 128, 512], stage=3, block='d',
+                            train_bn=train_bn)  # output: N x 512 x 1/16 x 1/16
 
     # Stage 4
     x = conv_block(x, 3, [256, 256, 1024], stage=4, block='a', train_bn=train_bn)
@@ -212,7 +210,8 @@ def resnet_graph(input_image, architecture, stage5=True, train_bn=True):
     if stage5:
         x = conv_block(x, 3, [512, 512, 2048], stage=5, block='a', train_bn=train_bn)
         x = identity_block(x, 3, [512, 512, 2048], stage=5, block='b', train_bn=train_bn)
-        C5 = x = identity_block(x, 3, [512, 512, 2048], stage=5, block='c', train_bn=train_bn)  # output: N x 2048 x 1/64 x 1/64
+        C5 = x = identity_block(x, 3, [512, 512, 2048], stage=5, block='c',
+                                train_bn=train_bn)  # output: N x 2048 x 1/64 x 1/64
     else:
         C5 = None
 
@@ -364,15 +363,18 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
     """
     # Stage 1
     x = _conv_block(input_image, 32, alpha, strides=(2, 2), block_id=0, train_bn=train_bn)
-    C1 = x = _depthwise_conv_block(x, 64, alpha, depth_multiplier, block_id=1, train_bn=train_bn)  # output: N x 64x  1/2 x 1/2
+    C1 = x = _depthwise_conv_block(x, 64, alpha, depth_multiplier, block_id=1,
+                                   train_bn=train_bn)  # output: N x 64x  1/2 x 1/2
 
     # Stage 2
     x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, strides=(2, 2), block_id=2, train_bn=train_bn)
-    C2 = x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, block_id=3, train_bn=train_bn)  # output: N x 128 x 1/4 x 1/4
+    C2 = x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, block_id=3,
+                                   train_bn=train_bn)  # output: N x 128 x 1/4 x 1/4
 
     # Stage 3
     x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, strides=(2, 2), block_id=4, train_bn=train_bn)
-    C3 = x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, block_id=5, train_bn=train_bn)  # output: N x 256 x 1/8 x 1/8
+    C3 = x = _depthwise_conv_block(x, 256, alpha, depth_multiplier, block_id=5,
+                                   train_bn=train_bn)  # output: N x 256 x 1/8 x 1/8
 
     # Stage 4
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, strides=(2, 2), block_id=6, train_bn=train_bn)
@@ -380,12 +382,14 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=8, train_bn=train_bn)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=9, train_bn=train_bn)
     x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=10, train_bn=train_bn)
-    C4 = x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=11, train_bn=train_bn)  # output: N x 512 x 1/16 x 1/16
+    C4 = x = _depthwise_conv_block(x, 512, alpha, depth_multiplier, block_id=11,
+                                   train_bn=train_bn)  # output: N x 512 x 1/16 x 1/16
 
     # Stage 5
     if stage5:
         x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, strides=(2, 2), block_id=12, train_bn=train_bn)
-        C5 = x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=13, train_bn=train_bn)  # output: N x 1024 x 1/32 x 1/32
+        C5 = x = _depthwise_conv_block(x, 1024, alpha, depth_multiplier, block_id=13,
+                                       train_bn=train_bn)  # output: N x 1024 x 1/32 x 1/32
     else:
         C5 = None
 
@@ -407,7 +411,8 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
    (https://arxiv.org/abs/1801.04381)
 """
 
-def _bottleneck(inputs, filters, kernel, t, s, r=False, alpha=1.0, block_id=1, train_bn = False):
+
+def _bottleneck(inputs, filters, kernel, t, s, r=False, alpha=1.0, block_id=1, train_bn=False):
     """Bottleneck
     This function defines a basic bottleneck structure.
     # Arguments
@@ -429,21 +434,21 @@ def _bottleneck(inputs, filters, kernel, t, s, r=False, alpha=1.0, block_id=1, t
     tchannel = K.int_shape(inputs)[channel_axis] * t
     filters = int(alpha * filters)
 
-    x = _conv_block(inputs, tchannel, alpha, (1, 1), (1, 1),block_id=block_id,train_bn=train_bn)
+    x = _conv_block(inputs, tchannel, alpha, (1, 1), (1, 1), block_id=block_id, train_bn=train_bn)
 
     x = KL.DepthwiseConv2D(kernel,
-                    strides=(s, s),
-                    depth_multiplier=1,
-                    padding='same',
-                    name='conv_dw_{}'.format(block_id))(x)
-    x = BatchNorm(axis=channel_axis,name='conv_dw_{}_bn'.format(block_id))(x, training=train_bn)
+                           strides=(s, s),
+                           depth_multiplier=1,
+                           padding='same',
+                           name='conv_dw_{}'.format(block_id))(x)
+    x = BatchNorm(axis=channel_axis, name='conv_dw_{}_bn'.format(block_id))(x, training=train_bn)
     x = KL.Activation(relu6, name='conv_dw_{}_relu'.format(block_id))(x)
 
     x = KL.Conv2D(filters,
-                    (1, 1),
-                    strides=(1, 1),
-                    padding='same',
-                    name='conv_pw_{}'.format(block_id))(x)
+                  (1, 1),
+                  strides=(1, 1),
+                  padding='same',
+                  name='conv_pw_{}'.format(block_id))(x)
     x = BatchNorm(axis=channel_axis, name='conv_pw_{}_bn'.format(block_id))(x, training=train_bn)
 
     if r:
@@ -478,7 +483,7 @@ def _inverted_residual_block(inputs, filters, kernel, t, strides, n, alpha, bloc
     return x
 
 
-def mobilenetv2_graph(inputs, architecture, alpha=1.0, stage5=True, train_bn=False):
+def mobilenetv2_graph(input_image, architecture, alpha=1.0, stage5=True, train_bn=False):
     """MobileNetv2
     This function defines a MobileNetv2 architectures.
     # Arguments
@@ -491,15 +496,23 @@ def mobilenetv2_graph(inputs, architecture, alpha=1.0, stage5=True, train_bn=Fal
     """
     assert architecture in ["mobilenetv2"]
 
-    x      = _conv_block(inputs, 32, alpha, (3, 3), strides=(2, 2), block_id=0, train_bn=train_bn)  # output: N x 32 x 1/2 x 1/2
-    C1 = x = _inverted_residual_block(x, 16,  (3, 3), t=1, strides=1, n=1, alpha=1.0, block_id=1, train_bn=train_bn)  # output: N x 16 x 1/2 x 1/2
-    C2 = x = _inverted_residual_block(x, 24,  (3, 3), t=6, strides=2, n=2, alpha=1.0, block_id=2, train_bn=train_bn)  # output: N x 24 x 1/4 x 1/4
-    C3 = x = _inverted_residual_block(x, 32,  (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=4, train_bn=train_bn)  # output: N x 32 x 1/8 x 1/8
-    x      = _inverted_residual_block(x, 64,  (3, 3), t=6, strides=2, n=4, alpha=1.0, block_id=7, train_bn=train_bn)  # output: N x 64 x 1/16 x 1/16
-    C4 = x = _inverted_residual_block(x, 96,  (3, 3), t=6, strides=1, n=3, alpha=1.0, block_id=11, train_bn=train_bn)  # output: N x 96 x 1/16 x 1/16
-    x      = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14, train_bn=train_bn)  # output: N x 160 x 1/32 x 1/32
+    x = _conv_block(input_image, 32, alpha, (3, 3), strides=(2, 2), block_id=0,
+                    train_bn=train_bn)  # output: N x 32 x 1/2 x 1/2
+    C1 = x = _inverted_residual_block(x, 16, (3, 3), t=1, strides=1, n=1, alpha=1.0, block_id=1,
+                                      train_bn=train_bn)  # output: N x 16 x 1/2 x 1/2
+    C2 = x = _inverted_residual_block(x, 24, (3, 3), t=6, strides=2, n=2, alpha=1.0, block_id=2,
+                                      train_bn=train_bn)  # output: N x 24 x 1/4 x 1/4
+    C3 = x = _inverted_residual_block(x, 32, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=4,
+                                      train_bn=train_bn)  # output: N x 32 x 1/8 x 1/8
+    x = _inverted_residual_block(x, 64, (3, 3), t=6, strides=2, n=4, alpha=1.0, block_id=7,
+                                 train_bn=train_bn)  # output: N x 64 x 1/16 x 1/16
+    C4 = x = _inverted_residual_block(x, 96, (3, 3), t=6, strides=1, n=3, alpha=1.0, block_id=11,
+                                      train_bn=train_bn)  # output: N x 96 x 1/16 x 1/16
+    x = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14,
+                                 train_bn=train_bn)  # output: N x 160 x 1/32 x 1/32
     if stage5:
-        C5 = x = _inverted_residual_block(x, 320, (3, 3), t=6, strides=1, n=1, alpha=1.0, block_id=17, train_bn=train_bn)  # output: N x 320 x 1/32 x 1/32
+        C5 = x = _inverted_residual_block(x, 320, (3, 3), t=6, strides=1, n=1, alpha=1.0, block_id=17,
+                                          train_bn=train_bn)  # output: N x 320 x 1/32 x 1/32
     else:
         C5 = None
     # x = _conv_block(x, 1280, alpha, (1, 1), strides=(1, 1), block_id=18, train_bn=train_bn)
@@ -673,6 +686,412 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
                                name='block14_sepconv2')(x)
         x = KL.BatchNormalization(name='block14_sepconv2_bn')(x, training=train_bn)
         C5 = x = KL.Activation('relu', name='block14_sepconv2_act')(x)  # output: N x 2048 x 1/32 x 1/32
+    else:
+        C5 = None
+
+    return [C1, C2, C3, C4, C5]
+
+
+############################################################
+#  NASNet-Mobile Graph
+############################################################
+
+
+
+def correct_pad(inputs, kernel_size):
+    """Returns a tuple for zero-padding for 2D convolution with downsampling.
+
+    # Arguments
+        input_size: An integer or tuple/list of 2 integers.
+        kernel_size: An integer or tuple/list of 2 integers.
+
+    # Returns
+        A tuple.
+    """
+    img_dim = 1
+    input_size = K.int_shape(inputs)[img_dim:(img_dim + 2)]
+
+    if isinstance(kernel_size, int):
+        kernel_size = (kernel_size, kernel_size)
+
+    if input_size[0] is None:
+        adjust = (1, 1)
+    else:
+        adjust = (1 - input_size[0] % 2, 1 - input_size[1] % 2)
+
+    correct = (kernel_size[0] // 2, kernel_size[1] // 2)
+
+    return ((correct[0] - adjust[0], correct[0]),
+            (correct[1] - adjust[1], correct[1]))
+
+
+def _separable_conv_block(ip, filters,
+                          kernel_size=(3, 3),
+                          strides=(1, 1),
+                          block_id=None,
+                          train_bn=False):
+    """Adds 2 blocks of [relu-separable conv-batchnorm].
+
+    # Arguments
+        ip: Input tensor
+        filters: Number of output filters per layer
+        kernel_size: Kernel size of separable convolutions
+        strides: Strided convolution for downsampling
+        block_id: String block_id
+
+    # Returns
+        A Keras tensor
+    """
+    channel_dim = -1
+
+    with tf.name_scope('separable_conv_block_%s' % block_id):
+        x = KL.Activation('relu')(ip)
+        if strides == (2, 2):
+            x = KL.ZeroPadding2D(
+                padding=correct_pad(x, kernel_size),
+                name='separable_conv_1_pad_%s' % block_id)(x)
+            conv_pad = 'valid'
+        else:
+            conv_pad = 'same'
+        x = KL.SeparableConv2D(filters, kernel_size,
+                               strides=strides,
+                               name='separable_conv_1_%s' % block_id,
+                               padding=conv_pad, use_bias=False,
+                               kernel_initializer='he_normal')(x)
+        x = KL.BatchNormalization(
+            axis=channel_dim,
+            momentum=0.9997,
+            epsilon=1e-3,
+            name='separable_conv_1_bn_%s' % block_id)(x, training=train_bn)
+        x = KL.Activation('relu')(x)
+        x = KL.SeparableConv2D(filters, kernel_size,
+                               name='separable_conv_2_%s' % block_id,
+                               padding='same',
+                               use_bias=False,
+                               kernel_initializer='he_normal')(x)
+        x = KL.BatchNormalization(
+            axis=channel_dim,
+            momentum=0.9997,
+            epsilon=1e-3,
+            name='separable_conv_2_bn_%s' % block_id)(x, training=train_bn)
+    return x
+
+
+def _adjust_block(p, ip, filters, block_id=None, train_bn=False):
+    '''Adjusts the input `previous path` to match the shape of the `input`.
+
+    Used in situations where the output number of filters needs to be changed.
+
+    # Arguments
+        p: Input tensor which needs to be modified
+        ip: Input tensor whose shape needs to be matched
+        filters: Number of output filters to be matched
+        block_id: String block_id
+
+    # Returns
+        Adjusted Keras tensor
+    '''
+    channel_dim = -1
+    img_dim = -2
+
+    ip_shape = K.int_shape(ip)
+
+    if p is not None:
+        p_shape = K.int_shape(p)
+
+    with tf.name_scope('adjust_block'):
+        if p is None:
+            p = ip
+
+        elif p_shape[img_dim] != ip_shape[img_dim]:
+            with tf.name_scope('adjust_reduction_block_%s' % block_id):
+                p = KL.Activation('relu',
+                                  name='adjust_relu_1_%s' % block_id)(p)
+                p1 = KL.AveragePooling2D(
+                    (1, 1),
+                    strides=(2, 2),
+                    padding='valid',
+                    name='adjust_avg_pool_1_%s' % block_id)(p)
+                p1 = KL.Conv2D(
+                    filters // 2, (1, 1),
+                    padding='same',
+                    use_bias=False, name='adjust_conv_1_%s' % block_id,
+                    kernel_initializer='he_normal')(p1)
+
+                p2 = KL.ZeroPadding2D(padding=((0, 1), (0, 1)))(p)
+                p2 = KL.Cropping2D(cropping=((1, 0), (1, 0)))(p2)
+                p2 = KL.AveragePooling2D(
+                    (1, 1),
+                    strides=(2, 2),
+                    padding='valid',
+                    name='adjust_avg_pool_2_%s' % block_id)(p2)
+                p2 = KL.Conv2D(
+                    filters // 2, (1, 1),
+                    padding='same',
+                    use_bias=False,
+                    name='adjust_conv_2_%s' % block_id,
+                    kernel_initializer='he_normal')(p2)
+
+                p = KL.concatenate([p1, p2], axis=channel_dim)
+                p = KL.BatchNormalization(
+                    axis=channel_dim,
+                    momentum=0.9997,
+                    epsilon=1e-3,
+                    name='adjust_bn_%s' % block_id)(p, training=train_bn)
+
+        elif p_shape[channel_dim] != filters:
+            with tf.name_scope('adjust_projection_block_%s' % block_id):
+                p = KL.Activation('relu')(p)
+                p = KL.Conv2D(
+                    filters,
+                    (1, 1),
+                    strides=(1, 1),
+                    padding='same',
+                    name='adjust_conv_projection_%s' % block_id,
+                    use_bias=False,
+                    kernel_initializer='he_normal')(p)
+                p = KL.BatchNormalization(
+                    axis=channel_dim,
+                    momentum=0.9997,
+                    epsilon=1e-3,
+                    name='adjust_bn_%s' % block_id)(p, training=train_bn)
+    return p
+
+
+def _normal_a_cell(ip, p, filters, block_id=None, train_bn=False):
+    '''Adds a Normal cell for NASNet-A (Fig. 4 in the paper).
+
+    # Arguments
+        ip: Input tensor `x`
+        p: Input tensor `p`
+        filters: Number of output filters
+        block_id: String block_id
+
+    # Returns
+        A Keras tensor
+    '''
+    channel_dim = -1
+
+    with tf.name_scope('normal_A_block_%s' % block_id):
+        p = _adjust_block(p, ip, filters, block_id)
+
+        h = KL.Activation('relu')(ip)
+        h = KL.Conv2D(
+            filters, (1, 1),
+            strides=(1, 1),
+            padding='same',
+            name='normal_conv_1_%s' % block_id,
+            use_bias=False,
+            kernel_initializer='he_normal')(h)
+        h = KL.BatchNormalization(
+            axis=channel_dim,
+            momentum=0.9997,
+            epsilon=1e-3,
+            name='normal_bn_1_%s' % block_id)(h, training=train_bn)
+
+        with tf.name_scope('block_1'):
+            x1_1 = _separable_conv_block(
+                h, filters,
+                kernel_size=(5, 5),
+                block_id='normal_left1_%s' % block_id)
+            x1_2 = _separable_conv_block(
+                p, filters,
+                block_id='normal_right1_%s' % block_id)
+            x1 = KL.add([x1_1, x1_2], name='normal_add_1_%s' % block_id)
+
+        with tf.name_scope('block_2'):
+            x2_1 = _separable_conv_block(
+                p, filters, (5, 5),
+                block_id='normal_left2_%s' % block_id)
+            x2_2 = _separable_conv_block(
+                p, filters, (3, 3),
+                block_id='normal_right2_%s' % block_id)
+            x2 = KL.add([x2_1, x2_2], name='normal_add_2_%s' % block_id)
+
+        with tf.name_scope('block_3'):
+            x3 = KL.AveragePooling2D(
+                (3, 3),
+                strides=(1, 1),
+                padding='same',
+                name='normal_left3_%s' % block_id)(h)
+            x3 = KL.add([x3, p], name='normal_add_3_%s' % block_id)
+
+        with tf.name_scope('block_4'):
+            x4_1 = KL.AveragePooling2D(
+                (3, 3),
+                strides=(1, 1),
+                padding='same',
+                name='normal_left4_%s' % block_id)(p)
+            x4_2 = KL.AveragePooling2D(
+                (3, 3),
+                strides=(1, 1),
+                padding='same',
+                name='normal_right4_%s' % block_id)(p)
+            x4 = KL.add([x4_1, x4_2], name='normal_add_4_%s' % block_id)
+
+        with tf.name_scope('block_5'):
+            x5 = _separable_conv_block(h, filters,
+                                       block_id='normal_left5_%s' % block_id)
+            x5 = KL.add([x5, h], name='normal_add_5_%s' % block_id)
+
+        x = KL.concatenate([p, x1, x2, x3, x4, x5],
+                           axis=channel_dim,
+                           name='normal_concat_%s' % block_id)
+    return x, ip
+
+
+def _reduction_a_cell(ip, p, filters, block_id=None, train_bn=False):
+    '''Adds a Reduction cell for NASNet-A (Fig. 4 in the paper).
+
+    # Arguments
+        ip: Input tensor `x`
+        p: Input tensor `p`
+        filters: Number of output filters
+        block_id: String block_id
+
+    # Returns
+        A Keras tensor
+    '''
+    channel_dim = -1
+
+    with tf.name_scope('reduction_A_block_%s' % block_id):
+        p = _adjust_block(p, ip, filters, block_id)
+
+        h = KL.Activation('relu')(ip)
+        h = KL.Conv2D(
+            filters, (1, 1),
+            strides=(1, 1),
+            padding='same',
+            name='reduction_conv_1_%s' % block_id,
+            use_bias=False,
+            kernel_initializer='he_normal')(h)
+        h = KL.BatchNormalization(
+            axis=channel_dim,
+            momentum=0.9997,
+            epsilon=1e-3,
+            name='reduction_bn_1_%s' % block_id)(h, training=train_bn)
+        h3 = KL.ZeroPadding2D(
+            padding=correct_pad(h, 3),
+            name='reduction_pad_1_%s' % block_id)(h)
+
+        with tf.name_scope('block_1'):
+            x1_1 = _separable_conv_block(
+                h, filters, (5, 5),
+                strides=(2, 2),
+                block_id='reduction_left1_%s' % block_id)
+            x1_2 = _separable_conv_block(
+                p, filters, (7, 7),
+                strides=(2, 2),
+                block_id='reduction_right1_%s' % block_id)
+            x1 = KL.add([x1_1, x1_2], name='reduction_add_1_%s' % block_id)
+
+        with tf.name_scope('block_2'):
+            x2_1 = KL.MaxPooling2D(
+                (3, 3),
+                strides=(2, 2),
+                padding='valid',
+                name='reduction_left2_%s' % block_id)(h3)
+            x2_2 = _separable_conv_block(
+                p, filters, (7, 7),
+                strides=(2, 2),
+                block_id='reduction_right2_%s' % block_id)
+            x2 = KL.add([x2_1, x2_2], name='reduction_add_2_%s' % block_id)
+
+        with tf.name_scope('block_3'):
+            x3_1 = KL.AveragePooling2D(
+                (3, 3),
+                strides=(2, 2),
+                padding='valid',
+                name='reduction_left3_%s' % block_id)(h3)
+            x3_2 = _separable_conv_block(
+                p, filters, (5, 5),
+                strides=(2, 2),
+                block_id='reduction_right3_%s' % block_id)
+            x3 = KL.add([x3_1, x3_2], name='reduction_add3_%s' % block_id)
+
+        with tf.name_scope('block_4'):
+            x4 = KL.AveragePooling2D(
+                (3, 3),
+                strides=(1, 1),
+                padding='same',
+                name='reduction_left4_%s' % block_id)(x1)
+            x4 = KL.add([x2, x4])
+
+        with tf.name_scope('block_5'):
+            x5_1 = _separable_conv_block(
+                x1, filters, (3, 3),
+                block_id='reduction_left4_%s' % block_id)
+            x5_2 = KL.MaxPooling2D(
+                (3, 3),
+                strides=(2, 2),
+                padding='valid',
+                name='reduction_right5_%s' % block_id)(h3)
+            x5 = KL.add([x5_1, x5_2], name='reduction_add4_%s' % block_id)
+
+        x = KL.concatenate(
+            [x2, x3, x4, x5],
+            axis=channel_dim,
+            name='reduction_concat_%s' % block_id)
+        return x, ip
+
+
+def mnasnet_graph(input_image,
+                  architecture,
+                  penultimate_filters=1056,
+                  num_blocks=4,
+                  stem_block_filters=32,
+                  skip_reduction=False,
+                  filter_multiplier=2,
+                  stage5=True,
+                  train_bn=False):
+    channel_dim = -1
+    filters = penultimate_filters // 24
+
+    x = KL.Conv2D(stem_block_filters, (3, 3),
+                  strides=(2, 2),
+                  padding='valid',
+                  use_bias=False,
+                  name='stem_conv1',
+                  kernel_initializer='he_normal')(input_image)
+
+    C1 = x = KL.BatchNormalization(axis=channel_dim, momentum=0.9997, epsilon=1e-3, name='stem_bn1')(x, training=train_bn)
+
+    p = None
+    x, p = _reduction_a_cell(x, p, filters // (filter_multiplier ** 2),
+                             block_id='stem_1')
+    C2 = x
+
+    x, p = _reduction_a_cell(x, p, filters // filter_multiplier,
+                             block_id='stem_2')
+
+    for i in range(num_blocks):
+        x, p = _normal_a_cell(x, p, filters, block_id='%d' % (i))
+
+    C3 = x
+
+    x, p0 = _reduction_a_cell(x, p, filters * filter_multiplier,
+                              block_id='reduce_%d' % num_blocks)
+
+    p = p0 if not skip_reduction else p
+
+    for i in range(num_blocks):
+        x, p = _normal_a_cell(x, p, filters * filter_multiplier,
+                              block_id='%d' % (num_blocks + i + 1))
+    C4 = x
+
+    if stage5:
+        x, p0 = _reduction_a_cell(x, p, filters * filter_multiplier ** 2,
+                                  block_id='reduce_%d' % (2 * num_blocks))
+
+        p = p0 if not skip_reduction else p
+
+        for i in range(num_blocks):
+            x, p = _normal_a_cell(x, p, filters * filter_multiplier ** 2,
+                                  block_id='%d' % (2 * num_blocks + i + 1))
+
+        x = KL.Activation('relu')(x)
+
+        C5 = x
     else:
         C5 = None
 
@@ -1485,7 +1904,7 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
     x = PyramidROIAlign([pool_size, pool_size],
                         name="roi_align_mask")([rois, image_meta] + feature_maps)
     # Resnet
-    if backbone in ['resnet50', 'resnet101']:
+    if backbone in ['resnet50', 'resnet101', 'mnasnet']:
         # Conv layers
         x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv1")(x)
         x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn1')(x, training=train_bn)
@@ -2412,13 +2831,18 @@ class MaskRCNN:
                 _, C2, C3, C4, C5 = resnet_graph(input_image, config.BACKBONE, stage5=True, train_bn=config.TRAIN_BN)
 
             elif config.BACKBONE in ["mobilenetv1"]:
-                _, C2, C3, C4, C5 = mobilenetv1_graph(input_image, config.BACKBONE, alpha=1.0, stage5=True, train_bn=config.TRAIN_BN)
+                _, C2, C3, C4, C5 = mobilenetv1_graph(input_image, config.BACKBONE, alpha=1.0, stage5=True,
+                                                      train_bn=config.TRAIN_BN)
 
             elif config.BACKBONE in ["mobilenetv2"]:
-                _, C2, C3, C4, C5 = mobilenetv2_graph(input_image, config.BACKBONE, alpha=1.0, stage5=True, train_bn=config.TRAIN_BN)
+                _, C2, C3, C4, C5 = mobilenetv2_graph(input_image, config.BACKBONE, alpha=1.0, stage5=True,
+                                                      train_bn=config.TRAIN_BN)
 
             elif config.BACKBONE in ["xception"]:
                 _, C2, C3, C4, C5 = xception_graph(input_image, config.BACKBONE, stage5=True, train_bn=config.TRAIN_BN)
+
+            elif config.BACKBONE in ["mnasnet"]:
+                _, C2, C3, C4, C5 = mnasnet_graph(input_image, config.BACKBONE, stage5=True, train_bn=config.TRAIN_BN)
 
         # Top-down Layers
         # TODO: add assert to verify feature map sizes match what's in config
@@ -2671,19 +3095,19 @@ class MaskRCNN:
                               'releases/download/v0.2/' \
                               'resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5'
             weight_path = get_file('resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5',
-                            TF_WEIGHTS_PATH,
-                            cache_subdir='models',
-                            md5_hash='a268eb855778b3df3c7506639542a6af')
+                                   TF_WEIGHTS_PATH,
+                                   cache_subdir='models',
+                                   md5_hash='a268eb855778b3df3c7506639542a6af')
         elif self.config.BACKBONE in ["mobilenetv1"]:
             TF_WEIGHTS_PATH = 'https://github.com/fchollet/deep-learning-models/' \
                               'releases/download/v0.6/' \
                               'mobilenet_1_0_224_tf_no_top.h5'
             weight_path = get_file('mobilenet_1_0_224_tf_no_top.h5',
-                            TF_WEIGHTS_PATH,
-                            cache_subdir='models',
-                            md5_hash='725ccbd03d61d7ced5b5c4cd17e7d527')
+                                   TF_WEIGHTS_PATH,
+                                   cache_subdir='models',
+                                   md5_hash='725ccbd03d61d7ced5b5c4cd17e7d527')
 
-        # TODO: url for MobileNet-v2 and Xception needed further
+        # TODO: url for MobileNet-v2/Xception/NASNet-mobile needed further
 
         return weight_path
 
@@ -3361,8 +3785,8 @@ def mold_image(images, config):
     colors in RGB order.
     """
 
-    # TensorFlow implementation of MobileNet-v1 requires the pixels of the input image scaled between [-1, 1]
-    if config.BACKBONE in ["mobilenetv1", "mobilenetv2", "xception"]:
+    # TensorFlow implementation of MobileNet requires the pixels of the input image scaled between [-1, 1]
+    if config.BACKBONE in ["mobilenetv1", "mobilenetv2", "xception", "mnasnet"]:
         return images.astype(np.float32) / 127.5 - 1.0
 
     return images.astype(np.float32) - config.MEAN_PIXEL
@@ -3371,7 +3795,7 @@ def mold_image(images, config):
 # wozhouh: reverse of 'mold_image'
 def unmold_image(normalized_images, config):
     """Takes a image normalized with mold() and returns the original."""
-    if config.BACKBONE in ["mobilenetv1", "mobilenetv2", "xception"]:
+    if config.BACKBONE in ["mobilenetv1", "mobilenetv2", "xception", "mnasnet"]:
         return ((normalized_images + 1) * 127.5).astype(np.uint8)
 
     return (normalized_images + config.MEAN_PIXEL).astype(np.uint8)

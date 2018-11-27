@@ -6,7 +6,7 @@ import cv2
 from tensorflow.python import pywrap_tensorflow
 
 
-class ModelTools:
+class TFModelTools:
     def __init__(self, ckpt_path=None, pb_path=None):
         self.ckpt_path = ckpt_path
         self.pb_path = pb_path
@@ -33,7 +33,7 @@ class ModelTools:
             print(op.values())
         # print(tf.get_default_graph().get_tensor_by_name("input_image:0"))
 
-    # Note that different models have different requirements on 'input'
+    # using list to announce the input and output tensors
     def test_inference(self, img, input_tensors, output_tensors):
         img_raw = cv2.imread(img)
         session = tf.Session()
@@ -49,5 +49,5 @@ if __name__ == '__main__':
     parser.add_argument('--img', type=str, required=False, help='Path to an image for test')
     args = parser.parse_args()
 
-    model_tools = ModelTools(ckpt_path=args.ckpt, pb_path=args.pb)
-    model_tools.print_pb_tensor()
+    tf_model_tools = TFModelTools(ckpt_path=args.ckpt, pb_path=args.pb)
+    tf_model_tools.print_pb_tensor()
