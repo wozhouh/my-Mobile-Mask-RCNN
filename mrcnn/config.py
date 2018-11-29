@@ -211,6 +211,14 @@ class Config(object):
     # Gradient norm clipping
     GRADIENT_CLIP_NORM = 5.0
 
+    # wozhouh: add options for heads of Mask-RCNN
+    # "original": two fully-connected layers as used in the paper (dimensionality defined by FPN_CLASSIF_FC_LAYERS_SIZE)
+    # "light-head": re-implementation as proposed at Face++ paper "Light-Head R-CNN"
+    DETECTION_HEAD = "original"
+    # "original": 3x3conv(x4)-2x2deconv-1x1conv as used in the paper (dimensionality fixed at 256)
+    # "xception": replace the 3x3 convolution above with the depth-wise plus one point-wise convolution
+    MASK_HEAD = "original"
+
     def __init__(self):
         """Set values of computed attributes."""
         # Effective batch size

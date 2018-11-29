@@ -90,7 +90,7 @@ def compute_backbone_shapes(config, image_shape):
 
 
 ############################################################
-#  Resnet Graph
+#  ResNet Graph
 ############################################################
 
 # Code adopted from:
@@ -329,6 +329,7 @@ def _depthwise_conv_block(inputs, pointwise_conv_filters, alpha,
     """
     channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
     pointwise_conv_filters = int(pointwise_conv_filters * alpha)
+
     # depth-wise
     x = KL.DepthwiseConv2D((3, 3),
                            padding='same',
@@ -338,6 +339,7 @@ def _depthwise_conv_block(inputs, pointwise_conv_filters, alpha,
                            name='conv_dw_{}'.format(block_id))(inputs)
     x = BatchNorm(axis=channel_axis, name='conv_dw_{}_bn'.format(block_id))(x, training=train_bn)
     x = KL.Activation(relu6, name='conv_dw_{}_relu'.format(block_id))(x)
+
     # point-wise
     x = KL.Conv2D(pointwise_conv_filters, (1, 1),
                   padding='same',
@@ -345,6 +347,7 @@ def _depthwise_conv_block(inputs, pointwise_conv_filters, alpha,
                   strides=(1, 1),
                   name='conv_pw_{}'.format(block_id))(x)
     x = BatchNorm(axis=channel_axis, name='conv_pw_{}_bn'.format(block_id))(x, training=train_bn)
+
     return KL.Activation(relu6, name='conv_pw_{}_relu'.format(block_id))(x)
 
 
@@ -496,21 +499,26 @@ def mobilenetv2_graph(input_image, architecture, alpha=1.0, stage5=True, train_b
     """
     assert architecture in ["mobilenetv2"]
 
+    # Stage 1
     x = _conv_block(input_image, 32, alpha, (3, 3), strides=(2, 2), block_id=0,
                     train_bn=train_bn)  # output: N x 32 x 1/2 x 1/2
     C1 = x = _inverted_residual_block(x, 16, (3, 3), t=1, strides=1, n=1, alpha=1.0, block_id=1,
                                       train_bn=train_bn)  # output: N x 16 x 1/2 x 1/2
+    # Stage 2
     C2 = x = _inverted_residual_block(x, 24, (3, 3), t=6, strides=2, n=2, alpha=1.0, block_id=2,
                                       train_bn=train_bn)  # output: N x 24 x 1/4 x 1/4
+    # Stage 3
     C3 = x = _inverted_residual_block(x, 32, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=4,
                                       train_bn=train_bn)  # output: N x 32 x 1/8 x 1/8
+    # Stage 4
     x = _inverted_residual_block(x, 64, (3, 3), t=6, strides=2, n=4, alpha=1.0, block_id=7,
                                  train_bn=train_bn)  # output: N x 64 x 1/16 x 1/16
     C4 = x = _inverted_residual_block(x, 96, (3, 3), t=6, strides=1, n=3, alpha=1.0, block_id=11,
                                       train_bn=train_bn)  # output: N x 96 x 1/16 x 1/16
-    x = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14,
-                                 train_bn=train_bn)  # output: N x 160 x 1/32 x 1/32
+    # Stage 5
     if stage5:
+        x = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14,
+                                     train_bn=train_bn)  # output: N x 160 x 1/32 x 1/32
         C5 = x = _inverted_residual_block(x, 320, (3, 3), t=6, strides=1, n=1, alpha=1.0, block_id=17,
                                           train_bn=train_bn)  # output: N x 320 x 1/32 x 1/32
     else:
@@ -536,7 +544,7 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
         stage5: Boolean. If False, stage5 of the network is not created
         train_bn: Boolean. Train or freeze Batch Norm layers
     """
-    # stage 1
+    # Stage 1
     x = KL.Conv2D(32, (3, 3),
                   strides=(2, 2),
                   use_bias=False,
@@ -548,7 +556,7 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
     x = KL.BatchNormalization(name='block1_conv2_bn')(x, training=train_bn)
     C1 = x = KL.Activation('relu', name='block1_conv2_act')(x)  # output: N x 64 x 1/2 x 1/2
 
-    # stage 2
+    # Stage 2
     residual = KL.Conv2D(128, (1, 1),
                          strides=(2, 2),
                          padding='same',
@@ -573,7 +581,7 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
                         name='block2_pool')(x)
     C2 = x = KL.add([x, residual])  # output: N x 128 x 1/4 x 1/4
 
-    # stage 3
+    # Stage 3
     residual = KL.Conv2D(256, (1, 1), strides=(2, 2),
                          padding='same', use_bias=False)(x)
     residual = KL.BatchNormalization()(residual, training=train_bn)
@@ -596,7 +604,7 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
                         name='block3_pool')(x)
     C3 = x = KL.add([x, residual])  # output: N x 256 x 1/8 x 1/8
 
-    # stage 4
+    # Stage 4
     residual = KL.Conv2D(728, (1, 1),
                          strides=(2, 2),
                          padding='same',
@@ -648,7 +656,7 @@ def xception_graph(input_image, architecture, stage5=True, train_bn=False):
 
     C4 = x  # output: N x 728 x 1/16 x 1/16
 
-    # stage 5
+    # Stage 5
     if stage5:
         residual = KL.Conv2D(1024, (1, 1), strides=(2, 2),
                              padding='same', use_bias=False)(x)
@@ -1328,8 +1336,7 @@ def rpn_graph(feature_map, anchors_per_location, anchor_stride):
         rpn_bbox: [batch, H * W * anchors_per_location, (dy, dx, log(dh), log(dw))] Deltas to be
                   applied to anchors.
     """
-    # TODO: check if stride of 2 causes alignment issues if the feature map
-    # is not even.
+    # TODO: check if stride of 2 causes alignment issues if the feature map is not even.
     # Shared convolutional base of the RPN
     shared = KL.Conv2D(512, (3, 3), padding='same', activation='relu',
                        strides=anchor_stride,
@@ -1384,8 +1391,30 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  Feature Pyramid Network Heads
 ############################################################
 
+# wozhouh: used by light-head R-CNN to make the feature maps thin before the detection-head
+def large_separable_conv(feature_map, feature_map_index, channels_mid=256, channels_out=490, kernel_size=15):
+    branch_0a = KL.Conv2D(filters=channels_mid, kernel_size=(kernel_size, 1), strides=1,
+                          padding="SAME", use_bias=True, activation=None,
+                          name="mrcnn_large_separable_conv" + str(feature_map_index) + "_0a")(feature_map)
+    branch_0b = KL.Conv2D(filters=channels_out, kernel_size=(1, kernel_size), strides=1,
+                          padding="SAME", use_bias=True, activation=None,
+                          name="mrcnn_large_separable_conv" + str(feature_map_index) + "_0b")(branch_0a)
+    branch_1a = KL.Conv2D(filters=channels_mid, kernel_size=(1, kernel_size), strides=1,
+                          padding="SAME", use_bias=True, activation=None,
+                          name="mrcnn_large_separable_conv" + str(feature_map_index) + "_1a")(feature_map)
+    branch_1b = KL.Conv2D(filters=channels_out, kernel_size=(kernel_size, 1), strides=1,
+                          padding="SAME", use_bias=True, activation=None,
+                          name="mrcnn_large_separable_conv" + str(feature_map_index) + "_1b")(branch_1a)
+    x = KL.Add()([branch_0b, branch_1b])
+    # x = BatchNorm(name="mrcnn_large_separable_bn")(x, training=train_bn)
+    x = KL.Activation('relu', name="mrcnn_large_separable_out" + str(feature_map_index))(x)
+
+    return x
+
+
+# wozhouh: build the detection head of Mask-RCNN
 def fpn_classifier_graph(rois, feature_maps, image_meta,
-                         pool_size, num_classes, train_bn=True,
+                         pool_size, num_classes, detection_head, train_bn=True,
                          fc_layers_size=1024):
     """Builds the computation graph of the feature pyramid network classifier
     and regressor heads.
@@ -1398,7 +1427,7 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
     pool_size: The width of the square feature map generated from ROI Pooling.
     num_classes: number of classes, which determines the depth of the results
     train_bn: Boolean. Train or freeze Batch Norm layers
-    fc_layers_size: Size of the 2 FC layers
+    fc_layers_size: Size of the FC layer
 
     Returns:
         logits: [batch, num_rois, NUM_CLASSES] classifier logits (before softmax)
@@ -1406,41 +1435,57 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
         bbox_deltas: [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))] Deltas to apply to
                      proposal boxes
     """
-    # ROI Pooling
-    # Shape: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
-    x = PyramidROIAlign([pool_size, pool_size],
-                        name="roi_align_classifier")([rois, image_meta] + feature_maps)
-    # Two 1024 FC layers (implemented with Conv2D for consistency)
-    x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
-                           name="mrcnn_class_conv1")(x)
-    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
-    x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (1, 1)),
-                           name="mrcnn_class_conv2")(x)
-    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn2')(x, training=train_bn)
-    x = KL.Activation('relu')(x)
+
+    if detection_head in ["original"]:
+        # ROI Align
+        # Shape: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
+        x = PyramidROIAlign([pool_size, pool_size],
+                            name="roi_align_classifier")([rois, image_meta] + feature_maps)
+
+        # Two 1024 FC layers (implemented with Conv2D for consistency)
+        x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
+                       name="mrcnn_class_conv1")(x)
+        x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
+        x = KL.Activation('relu')(x)
+        x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (1, 1)),
+                       name="mrcnn_class_conv2")(x)
+        x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn2')(x, training=train_bn)
+        x = KL.Activation('relu')(x)
+
+    elif detection_head in ["light-head"]:
+        thinner_feature_maps = []
+        for k, feature_map in enumerate(feature_maps):
+            thinner_feature_maps.append(large_separable_conv(feature_map, feature_map_index=k))
+        x = PyramidROIAlign([pool_size, pool_size],
+                            name="roi_align_classifier")([rois, image_meta] + thinner_feature_maps)
+        # Only one fully-connected layer (also implemented with Conv2D)
+        x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
+                               name="mrcnn_class_conv")(x)
+        # x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class')(x, training=train_bn)
+        x = KL.Activation('relu')(x)
 
     shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
-                       name="pool_squeeze")(x)
+                           name="pool_squeeze")(x)
 
+    # change the layer name to test for light-head
     # Classifier head
     mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
-                                            name='mrcnn_class_logits')(shared)
+                                            name='mrcnn_class_logits_light')(shared)
     mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
-                                     name="mrcnn_class")(mrcnn_class_logits)
+                                     name="mrcnn_class_light")(mrcnn_class_logits)
 
     # BBox head
     # [batch, num_rois, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
     x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'),
-                           name='mrcnn_bbox_fc')(shared)
+                           name='mrcnn_bbox_fc_light')(shared)
     # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
     s = K.int_shape(x)
-    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
+    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox_light")(x)
 
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
 
 
-# wozhouh: add support for conv at heads of MobileNet/Xception-based Mask-RCNN
+# wozhouh: add support for depth-wise and point-wise convolution at the mask-head of Mask-RCNN
 def _timedistributed_separable_conv_block(inputs, pointwise_conv_filters, strides=(1, 1), block_id=1, train_bn=False):
     """Similiar to the _depthwise_conv_block used in the Backbone,
     but with each layer wrapped in a TimeDistributed layer,
@@ -1474,9 +1519,9 @@ def _timedistributed_separable_conv_block(inputs, pointwise_conv_filters, stride
     return KL.Activation(relu6, name='mrcnn_mask_conv_pw_{}_relu'.format(block_id))(x)
 
 
-# wozhouh: the mask heads for ResNet and MobileNet, respectively
+# wozhouh: build the mask head of Mask-RCNN
 def build_fpn_mask_graph(rois, feature_maps, image_meta,
-                         pool_size, num_classes, backbone, train_bn=True):
+                         pool_size, num_classes, mask_head, train_bn=True):
     """Builds the computation graph of the mask head of Feature Pyramid Network.
 
     rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
@@ -1498,7 +1543,7 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
     x = PyramidROIAlign([pool_size, pool_size],
                         name="roi_align_mask")([rois, image_meta] + feature_maps)
     # ResNet
-    if backbone in ['resnet50', 'resnet101']:
+    if mask_head in ['original']:
         # Conv layers
         x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv1")(x)
         x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn1')(x, training=train_bn)
@@ -1517,7 +1562,7 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
         x = KL.Activation('relu')(x)
 
     # MobileNet/Xception
-    elif backbone in ['mobilenetv1', 'mobilenetv2', 'xception']:
+    elif mask_head in ['xception']:
         x = _timedistributed_separable_conv_block(x, 256, block_id=1, train_bn=train_bn)
         x = _timedistributed_separable_conv_block(x, 256, block_id=2, train_bn=train_bn)
         x = _timedistributed_separable_conv_block(x, 256, block_id=3, train_bn=train_bn)
@@ -2422,7 +2467,8 @@ class MaskRCNN:
             _, C2, C3, C4, C5 = config.BACKBONE(input_image, stage5=True, train_bn=config.TRAIN_BN)
         else:
             if config.BACKBONE in ["resnet50", "resnet101"]:
-                _, C2, C3, C4, C5 = resnet_graph(input_image, config.BACKBONE, stage5=True, train_bn=config.TRAIN_BN)
+                _, C2, C3, C4, C5 = resnet_graph(input_image, config.BACKBONE, stage5=True,
+                                                 train_bn=config.TRAIN_BN)
 
             elif config.BACKBONE in ["mobilenetv1"]:
                 _, C2, C3, C4, C5 = mobilenetv1_graph(input_image, config.BACKBONE, alpha=1.0, stage5=True,
@@ -2433,7 +2479,8 @@ class MaskRCNN:
                                                       train_bn=config.TRAIN_BN)
 
             elif config.BACKBONE in ["xception"]:
-                _, C2, C3, C4, C5 = xception_graph(input_image, config.BACKBONE, stage5=True, train_bn=config.TRAIN_BN)
+                _, C2, C3, C4, C5 = xception_graph(input_image, config.BACKBONE, stage5=True,
+                                                   train_bn=config.TRAIN_BN)
 
         # Top-down Layers
         # TODO: add assert to verify feature map sizes match what's in config
@@ -2529,7 +2576,7 @@ class MaskRCNN:
             # TODO: verify that this handles zero padded ROIs
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
                 fpn_classifier_graph(rois, mrcnn_feature_maps, input_image_meta,
-                                     config.POOL_SIZE, config.NUM_CLASSES,
+                                     config.POOL_SIZE, config.NUM_CLASSES, config.DETECTION_HEAD,
                                      train_bn=config.TRAIN_BN,
                                      fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
 
@@ -2537,7 +2584,7 @@ class MaskRCNN:
                                               input_image_meta,
                                               config.MASK_POOL_SIZE,
                                               config.NUM_CLASSES,
-                                              config.BACKBONE,
+                                              config.MASK_HEAD,
                                               train_bn=config.TRAIN_BN)
 
             # TODO: clean up (use tf.identify if necessary)
@@ -2570,7 +2617,7 @@ class MaskRCNN:
             # Proposal classifier and BBox regressor heads
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
                 fpn_classifier_graph(rpn_rois, mrcnn_feature_maps, input_image_meta,
-                                     config.POOL_SIZE, config.NUM_CLASSES,
+                                     config.POOL_SIZE, config.NUM_CLASSES, config.DETECTION_HEAD,
                                      train_bn=config.TRAIN_BN,
                                      fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
 
@@ -2586,7 +2633,7 @@ class MaskRCNN:
                                               input_image_meta,
                                               config.MASK_POOL_SIZE,
                                               config.NUM_CLASSES,
-                                              config.BACKBONE,
+                                              config.MASK_HEAD,
                                               train_bn=config.TRAIN_BN)
 
             model = KM.Model([input_image, input_image_meta, input_anchors],
