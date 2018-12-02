@@ -216,7 +216,7 @@ class Config(object):
     # "light-head": re-implementation as proposed at Face++ paper "Light-Head R-CNN"
     DETECTION_HEAD = "original"
     # "original": 3x3conv(x4)-2x2deconv-1x1conv as used in the paper (dimensionality fixed at 256)
-    # "xception": replace the 3x3 convolution above with the depth-wise plus one point-wise convolution
+    # "mobile": replace the 3x3 convolution above with the pair of one depth-wise and one point-wise convolution
     MASK_HEAD = "original"
 
     def __init__(self):
@@ -226,11 +226,9 @@ class Config(object):
 
         # Input image size
         if self.IMAGE_RESIZE_MODE == "crop":
-            self.IMAGE_SHAPE = np.array([self.IMAGE_MIN_DIM, self.IMAGE_MIN_DIM,
-                self.IMAGE_CHANNEL_COUNT])
+            self.IMAGE_SHAPE = np.array([self.IMAGE_MIN_DIM, self.IMAGE_MIN_DIM, self.IMAGE_CHANNEL_COUNT])
         else:
-            self.IMAGE_SHAPE = np.array([self.IMAGE_MAX_DIM, self.IMAGE_MAX_DIM,
-                self.IMAGE_CHANNEL_COUNT])
+            self.IMAGE_SHAPE = np.array([self.IMAGE_MAX_DIM, self.IMAGE_MAX_DIM, self.IMAGE_CHANNEL_COUNT])
 
         # Image meta data length
         # See compose_image_meta() for details

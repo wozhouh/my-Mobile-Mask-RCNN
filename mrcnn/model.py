@@ -190,28 +190,28 @@ def resnet_graph(input_image, architecture, stage5=True, train_bn=True):
     # Stage 2
     x = conv_block(x, 3, [64, 64, 256], stage=2, block='a', strides=(1, 1), train_bn=train_bn)
     x = identity_block(x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn)
-    C2 = x = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)  # output: N x 256 x 1/8 x 1/8
+    C2 = x = identity_block(x, 3, [64, 64, 256], stage=2, block='c', train_bn=train_bn)  # output: N x 256 x 1/4 x 1/4
 
     # Stage 3
     x = conv_block(x, 3, [128, 128, 512], stage=3, block='a', train_bn=train_bn)
     x = identity_block(x, 3, [128, 128, 512], stage=3, block='b', train_bn=train_bn)
     x = identity_block(x, 3, [128, 128, 512], stage=3, block='c', train_bn=train_bn)
     C3 = x = identity_block(x, 3, [128, 128, 512], stage=3, block='d',
-                            train_bn=train_bn)  # output: N x 512 x 1/16 x 1/16
+                            train_bn=train_bn)  # output: N x 512 x 1/8 x 1/8
 
     # Stage 4
     x = conv_block(x, 3, [256, 256, 1024], stage=4, block='a', train_bn=train_bn)
     block_count = {"resnet50": 5, "resnet101": 22}[architecture]
     for i in range(block_count):
         x = identity_block(x, 3, [256, 256, 1024], stage=4, block=chr(98 + i), train_bn=train_bn)
-    C4 = x  # output: N x 1024 x 1/32 x 1/32
+    C4 = x  # output: N x 1024 x 1/16 x 1/16
 
     # Stage 5
     if stage5:
         x = conv_block(x, 3, [512, 512, 2048], stage=5, block='a', train_bn=train_bn)
         x = identity_block(x, 3, [512, 512, 2048], stage=5, block='b', train_bn=train_bn)
         C5 = x = identity_block(x, 3, [512, 512, 2048], stage=5, block='c',
-                                train_bn=train_bn)  # output: N x 2048 x 1/64 x 1/64
+                                train_bn=train_bn)  # output: N x 2048 x 1/32 x 1/32
     else:
         C5 = None
 
@@ -219,7 +219,7 @@ def resnet_graph(input_image, architecture, stage5=True, train_bn=True):
 
 
 ############################################################
-#  Mobilenet Graph
+#  MobileNet-v1 Graph
 ############################################################
 
 # wozhouh: Backbone of MobileNet-v1
@@ -367,7 +367,7 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
     # Stage 1
     x = _conv_block(input_image, 32, alpha, strides=(2, 2), block_id=0, train_bn=train_bn)
     C1 = x = _depthwise_conv_block(x, 64, alpha, depth_multiplier, block_id=1,
-                                   train_bn=train_bn)  # output: N x 64x  1/2 x 1/2
+                                   train_bn=train_bn)  # output: N x 64x 1/2 x 1/2
 
     # Stage 2
     x = _depthwise_conv_block(x, 128, alpha, depth_multiplier, strides=(2, 2), block_id=2, train_bn=train_bn)
@@ -400,7 +400,7 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
 
 
 ############################################################
-#  MobileNetV2 Graph
+#  MobileNet-v2 Graph
 ############################################################
 
 # wozhouh: Backbone of MobileNet-v2
@@ -837,7 +837,7 @@ def log2_graph(x):
 
 
 class PyramidROIAlign(KE.Layer):
-    """Implements ROI Pooling on multiple levels of the feature pyramid.
+    """Implements ROI Align on multiple levels of the feature pyramid.
 
     Params:
     - pool_shape: [pool_height, pool_width] of the output pooled regions. Usually [7, 7]
@@ -868,12 +868,12 @@ class PyramidROIAlign(KE.Layer):
         # Holds details about the image. See compose_image_meta()
         image_meta = inputs[1]
 
-        # Feature Maps. List of feature maps from different level of the
+        # Feature Maps. List of feature maps from different levels of the
         # feature pyramid. Each is [batch, height, width, channels]
         feature_maps = inputs[2:]
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
-        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
+        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
         h = y2 - y1
         w = x2 - x1
         # Use shape of first image. Images in a batch must have the same size.
@@ -883,23 +883,23 @@ class PyramidROIAlign(KE.Layer):
         # e.g. a 224x224 ROI (in pixels) maps to P4
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-        roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
-        roi_level = tf.squeeze(roi_level, 2)
+        roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
+        roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
 
         # Loop through levels and apply ROI pooling to each. P2 to P5.
         pooled = []
         box_to_level = []
         for i, level in enumerate(range(2, 6)):
-            ix = tf.where(tf.equal(roi_level, level))
-            level_boxes = tf.gather_nd(boxes, ix)
+            ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
+            level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
 
-            # Box indices for crop_and_resize.
-            box_indices = tf.cast(ix[:, 0], tf.int32)
+            # Box indices for crop_and_resize (specify which image the bbox refers to)
+            box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
 
             # Keep track of which box is mapped to which level
             box_to_level.append(ix)
 
-            # Stop gradient propogation to ROI proposals
+            # Stop gradient propagation to ROI proposals
             level_boxes = tf.stop_gradient(level_boxes)
             box_indices = tf.stop_gradient(box_indices)
 
@@ -913,18 +913,17 @@ class PyramidROIAlign(KE.Layer):
             # which is how it's done in tf.crop_and_resize()
             # Result: [batch * num_boxes, pool_height, pool_width, channels]
             pooled.append(tf.image.crop_and_resize(
-                feature_maps[i], level_boxes, box_indices, self.pool_shape,
-                method="bilinear"))
+                feature_maps[i], level_boxes, box_indices, self.pool_shape, method="bilinear"))
 
         # Pack pooled features into one tensor
-        pooled = tf.concat(pooled, axis=0)
+        pooled = tf.concat(pooled, axis=0)  # [batch * num_boxes, pool_height, pool_width, channels]
 
         # Pack box_to_level mapping into one array and add another
         # column representing the order of pooled boxes
-        box_to_level = tf.concat(box_to_level, axis=0)
+        # box_to_level: list of shape [batch, num_boxes, 1] for every pyramid level
+        box_to_level = tf.concat(box_to_level, axis=0)  # [4, batch, num_boxes, 1]
         box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
-        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range],
-                                 axis=1)
+        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)  # [4, batch, num_boxes, 2]
 
         # Rearrange pooled features to match the order of the original boxes
         # Sort box_to_level by batch then box index
@@ -937,11 +936,152 @@ class PyramidROIAlign(KE.Layer):
 
         # Re-add the batch dimension
         shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
-        pooled = tf.reshape(pooled, shape)
+        pooled = tf.reshape(pooled, shape)  # [batch, num_boxes, 7, 7, 256]]
         return pooled
 
     def compute_output_shape(self, input_shape):
         return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1],)
+        # [batch_size, num_bboxes, pool_shape(7), pool_shape(7), FPN_channels(256)]
+
+
+# wozhouh: add position-sensitive ROI-align, which refers to the PyramidROIAlign layer above
+class PyramidPSROIAlign(KE.Layer):
+    """Implements position-sensitive ROI Align on multiple levels of the feature pyramid.
+
+    Params:
+    - pool_shape: [pool_height, pool_width] of the output pooled regions. Usually [7, 7]
+
+    Inputs:
+    - boxes: [batch, num_boxes, (y1, x1, y2, x2)] in normalized
+             coordinates. Possibly padded with zeros if not enough
+             boxes to fill the array.
+    - image_meta: [batch, (meta data)] Image details. See compose_image_meta()
+    - psroi_score_maps: List of position-sensitive score maps from different levels of the pyramid
+                        following the large-separable convolution.
+                        Each is [batch, height, width, ps_channels]
+
+    Output:
+    Pooled regions in the shape: [batch, num_boxes, pool_height, pool_width, channels].
+    The width and height are those specific in the pool_shape in the layer
+    constructor.
+    Note that channel(output) = ps_channels(input) / (pool_shape[0] * pool_shape[1])
+    """
+
+    def __init__(self, pool_shape, **kwargs):
+        super(PyramidPSROIAlign, self).__init__(**kwargs)
+        self.pool_shape = tuple(pool_shape)
+        self.roi_bin_num = self.pool_shape[0] * self.pool_shape[1]
+
+    def call(self, inputs):
+        # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
+        boxes = inputs[0]  # [batch, num_boxes, 4]
+
+        # Image meta
+        # Holds details about the image. See compose_image_meta()
+        image_meta = inputs[1]
+
+        # Feature Maps. List of feature maps from different levels of the
+        # feature pyramid. Each is [batch, height, width, channels]
+        psroi_score_maps = inputs[2:]
+
+        batch_size = tf.cast(tf.shape(psroi_score_maps[0])[0], tf.int32)
+        channels = tf.cast((tf.shape(psroi_score_maps[0])[-1] / self.roi_bin_num), tf.int32)
+
+        # Assign each ROI to a level in the pyramid based on the ROI area.
+        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes]
+        h = y2 - y1
+        w = x2 - x1
+        # Use shape of first image. Images in a batch must have the same size.
+        image_shape = parse_image_meta_graph(image_meta)['image_shape'][0]
+        # Equation 1 in the Feature Pyramid Networks paper. Account for
+        # the fact that our coordinates are normalized here.
+        # e.g. a 224x224 ROI (in pixels) maps to P4
+        image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
+        roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
+        roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4 + log2(roi_h * roi_w)
+        roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
+
+        # Loop through levels and apply ROI pooling to each. P2 to P5.
+        pooled = []
+        box_to_level = []
+        for i, level in enumerate(range(2, 6)):
+            ix = tf.where(tf.equal(roi_level, level))
+            level_boxes = tf.gather_nd(boxes, ix)  # [level_num_boxes_level, 4]
+
+            # Box indices for crop_and_resize (specify which image the bbox refers to)
+            box_indices = tf.cast(ix[:, 0], tf.int32)  # [level_num_boxes]
+
+            # Keep track of which box is mapped to which level
+            box_to_level.append(ix)
+
+            # Stop gradient propagation to ROI proposals
+            level_boxes = tf.stop_gradient(level_boxes)
+            box_indices = tf.stop_gradient(box_indices)
+
+            # Crop and Resize
+            # From Mask R-CNN paper: "We sample four regular locations, so
+            # that we can evaluate either max or average pooling. In fact,
+            # interpolating only a single value at each bin center (without
+            # pooling) is nearly as effective."
+            #
+            # Here we use the simplified approach of a single value per bin,
+            # which is how it's done in tf.crop_and_resize()
+
+            pooled_bin_concat = []  # list of aligned values of every bin: [num_boxes_level, channels, 1] x roi_bin_num
+            level_y1, level_x1, level_y2, level_x2 = tf.split(level_boxes, 4, axis=1)  # [num_boxes_level, 1]
+            level_h_bin = (level_y2 - level_y1) / self.pool_shape[0]  # [num_boxes_level, 1]
+            level_w_bin = (level_x2 - level_x1) / self.pool_shape[1]  # [num_boxes_level, 1]
+            psroi_score_map_bins = tf.split(psroi_score_maps[i], self.roi_bin_num, axis=3)
+            # list of feature maps: [batch, feature_map_h, feature_map_w, channels(10)] x roi_bin_num(7x7)
+
+            # iterate over each bin of a RoI
+            # iterate over height
+            for k in range(self.pool_shape[0]):
+                # iterate over width
+                for l in range(self.pool_shape[1]):
+                    # find out the area in the feature map matching the bin
+                    bin_idx = k * self.pool_shape[0] + l
+                    bin_y1 = level_y1 + k * level_h_bin
+                    bin_x1 = level_x1 + l * level_w_bin
+                    bin_y2 = level_y1 + (k + 1) * level_h_bin
+                    bin_x2 = level_x1 + (l + 1) * level_w_bin
+                    bin_boxes = tf.concat([bin_y1, bin_x1, bin_y2, bin_x2], axis=1)  # [num_boxes_level, 4]
+                    # perform alignment by interpolation: [num_boxes_level, 1, 1, channels]
+                    bin_align = tf.image.crop_and_resize(
+                        psroi_score_map_bins[bin_idx], bin_boxes, box_indices, (1, 1), method="bilinear")
+                    pooled_bin_concat.append(tf.reshape(bin_align, [batch_size, channels, 1]))
+
+            # concat the pooled values of every bin together to get a pooled feature map
+            pooled_bin_concat = tf.concat(pooled_bin_concat, axis=2)
+            pooled_bin_reshape = tf.reshape(pooled_bin_concat, [batch_size, channels, self.pool_shape[0], self.pool_shape[1]])
+            pooled.append(tf.transpose(pooled_bin_reshape, [0, 2, 3, 1]))
+
+        # Pack pooled features into one tensor
+        pooled = tf.concat(pooled, axis=0)  # [batch * num_boxes, pool_height, pool_width, channels]
+
+        # Pack box_to_level mapping into one array and add another
+        # column representing the order of pooled boxes
+        # box_to_level: list of shape [batch, num_boxes, 1] for every pyramid level Px
+        box_to_level = tf.concat(box_to_level, axis=0)  # [P * batch, num_boxes]
+        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)  # index: [P * batch, 1]
+        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)
+
+        # Rearrange pooled features to match the order of the original boxes
+        # Sort box_to_level by batch then box index
+        # TF doesn't have a way to sort by two columns, so merge them and sort.
+        sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
+        ix = tf.nn.top_k(sorting_tensor, k=tf.shape(box_to_level)[0]).indices[::-1]
+        ix = tf.gather(box_to_level[:, 2], ix)
+        pooled = tf.gather(pooled, ix)
+
+        # Re-add the batch dimension
+        shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
+        pooled = tf.reshape(pooled, shape)  # [batch, num_boxes, 7, 7, 256]]
+        return pooled
+
+    def compute_output_shape(self, input_shape):
+        return input_shape[0][:2] + self.pool_shape + (int(input_shape[2][-1] / self.roi_bin_num),)
+        # [batch, num_boxes, pool_shape, pool_shape, channels]
 
 
 ############################################################
@@ -956,9 +1096,9 @@ def overlaps_graph(boxes1, boxes2):
     # every boxes1 against every boxes2 without loops.
     # TF doesn't have an equivalent to np.repeat() so simulate it
     # using tf.tile() and tf.reshape.
-    b1 = tf.reshape(tf.tile(tf.expand_dims(boxes1, 1),
-                            [1, 1, tf.shape(boxes2)[0]]), [-1, 4])
+    b1 = tf.reshape(tf.tile(tf.expand_dims(boxes1, 1), [1, 1, tf.shape(boxes2)[0]]), [-1, 4])
     b2 = tf.tile(boxes2, [tf.shape(boxes1)[0], 1])
+
     # 2. Compute intersections
     b1_y1, b1_x1, b1_y2, b1_x2 = tf.split(b1, 4, axis=1)
     b2_y1, b2_x1, b2_y2, b2_x2 = tf.split(b2, 4, axis=1)
@@ -967,13 +1107,16 @@ def overlaps_graph(boxes1, boxes2):
     y2 = tf.minimum(b1_y2, b2_y2)
     x2 = tf.minimum(b1_x2, b2_x2)
     intersection = tf.maximum(x2 - x1, 0) * tf.maximum(y2 - y1, 0)
+
     # 3. Compute unions
     b1_area = (b1_y2 - b1_y1) * (b1_x2 - b1_x1)
     b2_area = (b2_y2 - b2_y1) * (b2_x2 - b2_x1)
     union = b1_area + b2_area - intersection
+
     # 4. Compute IoU and reshape to [boxes1, boxes2]
     iou = intersection / union
     overlaps = tf.reshape(iou, [tf.shape(boxes1)[0], tf.shape(boxes2)[0]])
+
     return overlaps
 
 
@@ -1000,8 +1143,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     """
     # Assertions
     asserts = [
-        tf.Assert(tf.greater(tf.shape(proposals)[0], 0), [proposals],
-                  name="roi_assertion"),
+        tf.Assert(tf.greater(tf.shape(proposals)[0], 0), [proposals], name="roi_assertion"),
     ]
     with tf.control_dependencies(asserts):
         proposals = tf.identity(proposals)
@@ -1035,16 +1177,17 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
 
     # Determine positive and negative ROIs
     roi_iou_max = tf.reduce_max(overlaps, axis=1)
+
     # 1. Positive ROIs are those with >= 0.5 IoU with a GT box
     positive_roi_bool = (roi_iou_max >= 0.5)
     positive_indices = tf.where(positive_roi_bool)[:, 0]
+
     # 2. Negative ROIs are those with < 0.5 with every GT box. Skip crowds.
     negative_indices = tf.where(tf.logical_and(roi_iou_max < 0.5, no_crowd_bool))[:, 0]
 
     # Subsample ROIs. Aim for 33% positive
     # Positive ROIs
-    positive_count = int(config.TRAIN_ROIS_PER_IMAGE *
-                         config.ROI_POSITIVE_RATIO)
+    positive_count = int(config.TRAIN_ROIS_PER_IMAGE * config.ROI_POSITIVE_RATIO)
     positive_indices = tf.random_shuffle(positive_indices)[:positive_count]
     positive_count = tf.shape(positive_indices)[0]
     # Negative ROIs. Add enough to maintain positive:negative ratio.
@@ -1244,15 +1387,16 @@ def refine_detections_graph(rois, probs, deltas, window, config):
         return class_keep
 
     # 2. Map over class IDs
-    nms_keep = tf.map_fn(nms_keep_map, unique_pre_nms_class_ids,
-                         dtype=tf.int64)
+    nms_keep = tf.map_fn(nms_keep_map, unique_pre_nms_class_ids, dtype=tf.int64)
+
     # 3. Merge results into one list, and remove -1 padding
     nms_keep = tf.reshape(nms_keep, [-1])
     nms_keep = tf.gather(nms_keep, tf.where(nms_keep > -1)[:, 0])
+
     # 4. Compute intersection between keep and nms_keep
-    keep = tf.sets.set_intersection(tf.expand_dims(keep, 0),
-                                    tf.expand_dims(nms_keep, 0))
+    keep = tf.sets.set_intersection(tf.expand_dims(keep, 0), tf.expand_dims(nms_keep, 0))
     keep = tf.sparse_tensor_to_dense(keep)[0]
+
     # Keep top detections
     roi_count = config.DETECTION_MAX_INSTANCES
     class_scores_keep = tf.gather(class_scores, keep)
@@ -1337,7 +1481,7 @@ def rpn_graph(feature_map, anchors_per_location, anchor_stride):
                   applied to anchors.
     """
     # TODO: check if stride of 2 causes alignment issues if the feature map is not even.
-    # Shared convolutional base of the RPN
+    # Shared convolution base of the RPN
     shared = KL.Conv2D(512, (3, 3), padding='same', activation='relu',
                        strides=anchor_stride,
                        name='rpn_conv_shared')(feature_map)
@@ -1351,8 +1495,7 @@ def rpn_graph(feature_map, anchors_per_location, anchor_stride):
         lambda t: tf.reshape(t, [tf.shape(t)[0], -1, 2]))(x)
 
     # Softmax on last dimension of BG/FG.
-    rpn_probs = KL.Activation(
-        "softmax", name="rpn_class_xxx")(rpn_class_logits)
+    rpn_probs = KL.Activation("softmax", name="rpn_class_xxx")(rpn_class_logits)
 
     # Bounding box refinement. [batch, H, W, anchors per location * depth]
     # where depth is [x, y, log(w), log(h)]
@@ -1381,8 +1524,7 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
     rpn_bbox: [batch, H * W * anchors_per_location, (dy, dx, log(dh), log(dw))] Deltas to be
                 applied to anchors.
     """
-    input_feature_map = KL.Input(shape=[None, None, depth],
-                                 name="input_rpn_feature_map")
+    input_feature_map = KL.Input(shape=[None, None, depth], name="input_rpn_feature_map")
     outputs = rpn_graph(input_feature_map, anchors_per_location, anchor_stride)
     return KM.Model([input_feature_map], outputs, name="rpn_model")
 
@@ -1391,30 +1533,35 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  Feature Pyramid Network Heads
 ############################################################
 
-# wozhouh: used by light-head R-CNN to make the feature maps thin before the detection-head
-def large_separable_conv(feature_map, feature_map_index, channels_mid=256, channels_out=490, kernel_size=15):
+# wozhouh: utilized by light-head R-CNN to thinner the feature maps at the front of the detection-head
+def large_separable_conv_graph(feature_map, channels_mid=256, channels_out=490, kernel_size=15):
     branch_0a = KL.Conv2D(filters=channels_mid, kernel_size=(kernel_size, 1), strides=1,
                           padding="SAME", use_bias=True, activation=None,
-                          name="mrcnn_large_separable_conv" + str(feature_map_index) + "_0a")(feature_map)
+                          name="light_head_large_separable_conv_0a")(feature_map)
     branch_0b = KL.Conv2D(filters=channels_out, kernel_size=(1, kernel_size), strides=1,
                           padding="SAME", use_bias=True, activation=None,
-                          name="mrcnn_large_separable_conv" + str(feature_map_index) + "_0b")(branch_0a)
+                          name="light_head_large_separable_conv_0b")(branch_0a)
     branch_1a = KL.Conv2D(filters=channels_mid, kernel_size=(1, kernel_size), strides=1,
                           padding="SAME", use_bias=True, activation=None,
-                          name="mrcnn_large_separable_conv" + str(feature_map_index) + "_1a")(feature_map)
+                          name="light_head_large_separable_conv_1a")(feature_map)
     branch_1b = KL.Conv2D(filters=channels_out, kernel_size=(kernel_size, 1), strides=1,
                           padding="SAME", use_bias=True, activation=None,
-                          name="mrcnn_large_separable_conv" + str(feature_map_index) + "_1b")(branch_1a)
-    x = KL.Add()([branch_0b, branch_1b])
-    # x = BatchNorm(name="mrcnn_large_separable_bn")(x, training=train_bn)
-    x = KL.Activation('relu', name="mrcnn_large_separable_out" + str(feature_map_index))(x)
+                          name="light_head_large_separable_conv_1b")(branch_1a)
+    x = KL.Add(name="light_head_large_separable_add")([branch_0b, branch_1b])
+    x = KL.Activation('relu', name="light_head_large_separable_relu")(x)
 
     return x
 
 
+def build_large_separable_conv_model(depth):
+    input_feature_map = KL.Input(shape=[None, None, depth], name="input_large_separable_feature_map")
+    output_feature_map = large_separable_conv_graph(input_feature_map)
+    return KM.Model([input_feature_map], output_feature_map, name="large_separable_conv")
+
+
 # wozhouh: build the detection head of Mask-RCNN
 def fpn_classifier_graph(rois, feature_maps, image_meta,
-                         pool_size, num_classes, detection_head, train_bn=True,
+                         pool_size, num_classes, train_bn=False,
                          fc_layers_size=1024):
     """Builds the computation graph of the feature pyramid network classifier
     and regressor heads.
@@ -1436,53 +1583,79 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
                      proposal boxes
     """
 
-    if detection_head in ["original"]:
-        # ROI Align
-        # Shape: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
-        x = PyramidROIAlign([pool_size, pool_size],
-                            name="roi_align_classifier")([rois, image_meta] + feature_maps)
+    # rois: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
+    x = PyramidROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + feature_maps)
+    # output: batch x num_boxes x config.POOL_SIZE(7) x config.POOL_SIZE(7) x config.TOP_DOWN_PYRAMID_SIZE(256)
 
-        # Two 1024 FC layers (implemented with Conv2D for consistency)
-        x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
-                       name="mrcnn_class_conv1")(x)
-        x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
-        x = KL.Activation('relu')(x)
-        x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (1, 1)),
-                       name="mrcnn_class_conv2")(x)
-        x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn2')(x, training=train_bn)
-        x = KL.Activation('relu')(x)
+    # Two 1024 FC layers (implemented with Conv2D for consistency)
+    x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
+                           name="mrcnn_class_conv1")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # output: batch x num_boxes x 1 x 1 x 1024
 
-    elif detection_head in ["light-head"]:
-        thinner_feature_maps = []
-        for k, feature_map in enumerate(feature_maps):
-            thinner_feature_maps.append(large_separable_conv(feature_map, feature_map_index=k))
-        x = PyramidROIAlign([pool_size, pool_size],
-                            name="roi_align_classifier")([rois, image_meta] + thinner_feature_maps)
-        # Only one fully-connected layer (also implemented with Conv2D)
-        x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
-                               name="mrcnn_class_conv")(x)
-        # x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class')(x, training=train_bn)
-        x = KL.Activation('relu')(x)
+    x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (1, 1)), name="mrcnn_class_conv2")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn2')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # output: batch x num_boxes x 1 x 1 x 1024
 
-    shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
-                           name="pool_squeeze")(x)
+    shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2), name="pool_squeeze")(x)
+    # output: batch x num_boxes x 1024
 
-    # change the layer name to test for light-head
+    # Debug: change the layer name to test for light-head
     # Classifier head
-    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes),
-                                            name='mrcnn_class_logits_light')(shared)
-    mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"),
-                                     name="mrcnn_class_light")(mrcnn_class_logits)
+    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes), name='mrcnn_class_logits')(shared)
+    mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"), name="mrcnn_class")(mrcnn_class_logits)
+    # output: batch x num_boxes x 81
 
     # BBox head
     # [batch, num_rois, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
-    x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'),
-                           name='mrcnn_bbox_fc_light')(shared)
+    x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'), name='mrcnn_bbox_fc')(shared)
     # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
     s = K.int_shape(x)
-    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox_light")(x)
+    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
+    # output: batch x num_boxes x 81 x 4
 
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
+
+
+# the detection-head for light-head R-CNN
+def light_head_classifier_graph(rois, feature_maps, image_meta,
+                                pool_size, num_classes, pyramid_size, train_bn=False,
+                                fc_layers_size=2048):
+    large_separable_conv = build_large_separable_conv_model(pyramid_size)
+
+    thinner_feature_maps = []
+    for feature_map in feature_maps:
+        thinner_feature_maps.append(large_separable_conv([feature_map]))
+
+    x = PyramidPSROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + thinner_feature_maps)
+
+    # Only one fully-connected layer (also implemented with Conv2D for consistency)
+    x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
+                           name="light_head_class_conv")(x)
+    x = KL.TimeDistributed(BatchNorm(), name="light_head_class_bn")(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
+                       name="pool_squeeze")(x)
+    # output: batch x num_boxes x 1024
+
+    # Debug: change the layer name to test for light-head
+    # Classifier head
+    light_head_class_logits = KL.TimeDistributed(KL.Dense(num_classes), name="light_head_class_logits")(shared)
+    light_head_probs = KL.TimeDistributed(KL.Activation("softmax"), name="light_head_class")(light_head_class_logits)
+    # output: batch x num_boxes x 81
+
+    # BBox head
+    # [batch, num_rois, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
+    x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'), name="light_head_bbox_fc")(shared)
+    # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
+    s = K.int_shape(x)
+    light_head_bbox = KL.Reshape((s[1], num_classes, 4), name="light_head_bbox")(x)
+    # output: batch x num_boxes x 81 x 4
+
+    return light_head_class_logits, light_head_probs, light_head_bbox
 
 
 # wozhouh: add support for depth-wise and point-wise convolution at the mask-head of Mask-RCNN
@@ -1521,7 +1694,7 @@ def _timedistributed_separable_conv_block(inputs, pointwise_conv_filters, stride
 
 # wozhouh: build the mask head of Mask-RCNN
 def build_fpn_mask_graph(rois, feature_maps, image_meta,
-                         pool_size, num_classes, mask_head, train_bn=True):
+                         pool_size, num_classes, train_bn=True):
     """Builds the computation graph of the mask head of Feature Pyramid Network.
 
     rois: [batch, num_rois, (y1, x1, y2, x2)] Proposal boxes in normalized
@@ -1538,38 +1711,52 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
     # ROI Pooling
     # Shape: [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, channels]
 
-    # assert backbone in ['resnet50', 'resnet101', 'mobilenetv1', 'mobilenetv2']
+    x = PyramidROIAlign([pool_size, pool_size], name="roi_align_mask")([rois, image_meta] + feature_maps)
+    # output: batch x num_boxes x config.MASK_POOL_SIZE x config.MASK_POOL_SIZE x config.TOP_DOWN_PYRAMID_SIZE
 
-    x = PyramidROIAlign([pool_size, pool_size],
-                        name="roi_align_mask")([rois, image_meta] + feature_maps)
-    # ResNet
-    if mask_head in ['original']:
-        # Conv layers
-        x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv1")(x)
-        x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn1')(x, training=train_bn)
-        x = KL.Activation('relu')(x)
+    # Conv layers
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv1")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn1')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
 
-        x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv2")(x)
-        x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn2')(x, training=train_bn)
-        x = KL.Activation('relu')(x)
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv2")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn2')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
 
-        x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv3")(x)
-        x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn3')(x, training=train_bn)
-        x = KL.Activation('relu')(x)
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv3")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn3')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
 
-        x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv4")(x)
-        x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn4')(x, training=train_bn)
-        x = KL.Activation('relu')(x)
-
-    # MobileNet/Xception
-    elif mask_head in ['xception']:
-        x = _timedistributed_separable_conv_block(x, 256, block_id=1, train_bn=train_bn)
-        x = _timedistributed_separable_conv_block(x, 256, block_id=2, train_bn=train_bn)
-        x = _timedistributed_separable_conv_block(x, 256, block_id=3, train_bn=train_bn)
-        x = _timedistributed_separable_conv_block(x, 256, block_id=4, train_bn=train_bn)
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv4")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn4')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+    # output: batch x num_boxes x 14 x 14 x 256
 
     x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"), name="mrcnn_mask_deconv")(x)
+    # output: batch x num_boxes x 28 x 28 x 256
+
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"), name="mrcnn_mask")(x)
+    # output: batch x num_boxes x 28 x 28 x 81
+
+    return x
+
+
+# wozhouh: replace the original convolution with the depth-wise and point-wise pair following the Xception-like backbone
+def build_mobile_mask_graph(rois, feature_maps, image_meta,
+                            pool_size, num_classes, train_bn=True):
+    x = PyramidROIAlign([pool_size, pool_size], name="roi_align_mask")([rois, image_meta] + feature_maps)
+
+    x = _timedistributed_separable_conv_block(x, 256, block_id=1, train_bn=train_bn)
+    x = _timedistributed_separable_conv_block(x, 256, block_id=2, train_bn=train_bn)
+    x = _timedistributed_separable_conv_block(x, 256, block_id=3, train_bn=train_bn)
+    x = _timedistributed_separable_conv_block(x, 256, block_id=4, train_bn=train_bn)
+    # output: batch x num_boxes x config.MASK_POOL_SIZE x config.MASK_POOL_SIZE x config.TOP_DOWN_PYRAMID_SIZE
+
+    x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"), name="mrcnn_mask_deconv")(x)
+    # output: batch x num_boxes x 28 x 28 x 256
+
+    x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"), name="mrcnn_mask")(x)
+    # output: batch x num_boxes x 28 x 28 x 81
 
     return x
 
@@ -2434,15 +2621,14 @@ class MaskRCNN:
 
             # Detection GT (class IDs, bounding boxes, and masks)
             # 1. GT Class IDs (zero padded)
-            input_gt_class_ids = KL.Input(
-                shape=[None], name="input_gt_class_ids", dtype=tf.int32)
+            input_gt_class_ids = KL.Input(shape=[None], name="input_gt_class_ids", dtype=tf.int32)
+
             # 2. GT Boxes in pixels (zero padded)
             # [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in image coordinates
-            input_gt_boxes = KL.Input(
-                shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
+            input_gt_boxes = KL.Input(shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
             # Normalize coordinates
-            gt_boxes = KL.Lambda(lambda x: norm_boxes_graph(
-                x, K.shape(input_image)[1:3]))(input_gt_boxes)
+            gt_boxes = KL.Lambda(lambda x: norm_boxes_graph(x, K.shape(input_image)[1:3]))(input_gt_boxes)
+
             # 3. GT Masks (zero padded)
             # [batch, height, width, MAX_GT_INSTANCES]
             if config.USE_MINI_MASK:
@@ -2495,10 +2681,10 @@ class MaskRCNN:
             KL.UpSampling2D(size=(2, 2), name="fpn_p3upsampled")(P3),
             KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name='fpn_c2p2')(C2)])
         # Attach 3x3 conv to all P layers to get the final feature maps.
-        P2 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p2")(P2)
-        P3 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p3")(P3)
-        P4 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p4")(P4)
-        P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p5")(P5)
+        P2 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p2")(P2)  # N x 256 x 256 x 256
+        P3 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p3")(P3)  # N x 128 x 128 x 256
+        P4 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p4")(P4)  # N x 64 x 64 x 256
+        P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p5")(P5)  # N x 32 x 32 x 256
         # P6 is used for the 5th anchor scale in RPN. Generated by
         # subsampling from P5 with stride of 2.
         P6 = KL.MaxPooling2D(pool_size=(1, 1), strides=2, name="fpn_p6")(P5)
@@ -2526,8 +2712,7 @@ class MaskRCNN:
         for p in rpn_feature_maps:
             layer_outputs.append(rpn([p]))
         # Concatenate layer outputs
-        # Convert from list of lists of level outputs to list of lists
-        # of outputs across levels.
+        # Convert from list of lists of level outputs to list of lists of outputs across levels.
         # e.g. [[a1, b1, c1], [a2, b2, c2]] => [[a1, a2], [b1, b2], [c1, c2]]
         output_names = ["rpn_class_logits", "rpn_class", "rpn_bbox"]
         outputs = list(zip(*layer_outputs))
@@ -2548,8 +2733,7 @@ class MaskRCNN:
             config=config)([rpn_class, rpn_bbox, anchors])
 
         if mode == "training":
-            # Class ID mask to mark class IDs supported by the dataset the image
-            # came from.
+            # Class ID mask to mark class IDs supported by the dataset the image came from.
             active_class_ids = KL.Lambda(
                 lambda x: parse_image_meta_graph(x)["active_class_ids"]
             )(input_image_meta)
@@ -2573,19 +2757,34 @@ class MaskRCNN:
                     target_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
 
             # Network Heads
+            # the Detection Head
             # TODO: verify that this handles zero padded ROIs
-            mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
-                fpn_classifier_graph(rois, mrcnn_feature_maps, input_image_meta,
-                                     config.POOL_SIZE, config.NUM_CLASSES, config.DETECTION_HEAD,
-                                     train_bn=config.TRAIN_BN,
-                                     fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
+            if config.DETECTION_HEAD in ["light-head"]:
+                mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
+                    light_head_classifier_graph(rois, mrcnn_feature_maps, input_image_meta,
+                                                config.POOL_SIZE, config.NUM_CLASSES, config.TOP_DOWN_PYRAMID_SIZE,
+                                                train_bn=config.TRAIN_BN,
+                                                fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
+            else:
+                mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
+                    fpn_classifier_graph(rois, mrcnn_feature_maps, input_image_meta,
+                                         config.POOL_SIZE, config.NUM_CLASSES,
+                                         train_bn=config.TRAIN_BN,
+                                         fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
 
-            mrcnn_mask = build_fpn_mask_graph(rois, mrcnn_feature_maps,
-                                              input_image_meta,
-                                              config.MASK_POOL_SIZE,
-                                              config.NUM_CLASSES,
-                                              config.MASK_HEAD,
-                                              train_bn=config.TRAIN_BN)
+            # the Mask Head
+            if config.MASK_HEAD in ["mobile"]:
+                mrcnn_mask = build_mobile_mask_graph(rois, mrcnn_feature_maps,
+                                                     input_image_meta,
+                                                     config.MASK_POOL_SIZE,
+                                                     config.NUM_CLASSES,
+                                                     train_bn=config.TRAIN_BN)
+            else:
+                mrcnn_mask = build_fpn_mask_graph(rois, mrcnn_feature_maps,
+                                                  input_image_meta,
+                                                  config.MASK_POOL_SIZE,
+                                                  config.NUM_CLASSES,
+                                                  train_bn=config.TRAIN_BN)
 
             # TODO: clean up (use tf.identify if necessary)
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
@@ -2615,11 +2814,19 @@ class MaskRCNN:
         else:
             # Network Heads
             # Proposal classifier and BBox regressor heads
-            mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
-                fpn_classifier_graph(rpn_rois, mrcnn_feature_maps, input_image_meta,
-                                     config.POOL_SIZE, config.NUM_CLASSES, config.DETECTION_HEAD,
-                                     train_bn=config.TRAIN_BN,
-                                     fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
+            if config.DETECTION_HEAD in ["light-head"]:
+                mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
+                    light_head_classifier_graph(rpn_rois, mrcnn_feature_maps, input_image_meta,
+                                                config.POOL_SIZE, config.NUM_CLASSES, config.TOP_DOWN_PYRAMID_SIZE,
+                                                train_bn=config.TRAIN_BN,
+                                                fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
+
+            else:
+                mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
+                    fpn_classifier_graph(rpn_rois, mrcnn_feature_maps, input_image_meta,
+                                         config.POOL_SIZE, config.NUM_CLASSES,
+                                         train_bn=config.TRAIN_BN,
+                                         fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
 
             # Detections
             # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in
@@ -2629,12 +2836,20 @@ class MaskRCNN:
 
             # Create masks for detections
             detection_boxes = KL.Lambda(lambda x: x[..., :4])(detections)
-            mrcnn_mask = build_fpn_mask_graph(detection_boxes, mrcnn_feature_maps,
-                                              input_image_meta,
-                                              config.MASK_POOL_SIZE,
-                                              config.NUM_CLASSES,
-                                              config.MASK_HEAD,
-                                              train_bn=config.TRAIN_BN)
+
+            # Mask Head
+            if config.MASK_HEAD in ["mobile"]:
+                mrcnn_mask = build_mobile_mask_graph(detection_boxes, mrcnn_feature_maps,
+                                                     input_image_meta,
+                                                     config.MASK_POOL_SIZE,
+                                                     config.NUM_CLASSES,
+                                                     train_bn=config.TRAIN_BN)
+            else:
+                mrcnn_mask = build_fpn_mask_graph(detection_boxes, mrcnn_feature_maps,
+                                                  input_image_meta,
+                                                  config.MASK_POOL_SIZE,
+                                                  config.NUM_CLASSES,
+                                                  train_bn=config.TRAIN_BN)
 
             model = KM.Model([input_image, input_image_meta, input_anchors],
                              [detections, mrcnn_class, mrcnn_bbox,
@@ -2745,7 +2960,7 @@ class MaskRCNN:
                                    cache_subdir='models',
                                    md5_hash='725ccbd03d61d7ced5b5c4cd17e7d527')
 
-        # TODO: url for MobileNet-v2/Xception needed further
+        # TODO: pre-trained model url for MobileNet-v2/Xception needed further
 
         return weight_path
 
@@ -2900,20 +3115,23 @@ class MaskRCNN:
                     imgaug.augmenters.Fliplr(0.5),
                     imgaug.augmenters.GaussianBlur(sigma=(0.0, 5.0))
                 ])
-	    custom_callbacks: Optional. Add custom callbacks to be called
-	        with the keras fit_generator method. Must be list of type keras.callbacks.
+
+        custom_callbacks: Optional. Add custom callbacks to be called
+        with the keras fit_generator method. Must be list of type keras.callbacks.
         no_augmentation_sources: Optional. List of sources to exclude for
-            augmentation. A source is string that identifies a dataset and is
-            defined in the Dataset class.
+        augmentation. A source is string that identifies a dataset and is
+        defined in the Dataset class.
         """
         assert self.mode == "training", "Create model in training mode."
 
         # Pre-defined layer regular expressions
         layer_regex = {
-            # all layers but the backbone
+            # Heads
             "heads": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             # All layers
             "all": ".*",
+            # Light-Head
+            "light-head": r"(light_head\_.*)"
         }
         stage_regex = {}
         if self.config.BACKBONE in ["resnet50", "resnet101"]:
