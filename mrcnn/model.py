@@ -362,7 +362,7 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
         stage5: Boolean. If False, stage5 of the network is not created
         train_bn: Boolean. Train or freeze Batch Norm layers
     # Returns
-        five MobileNetv1 model stages.
+        five MobileNet-v1 model stages.
     """
     # Stage 1
     x = _conv_block(input_image, 32, alpha, strides=(2, 2), block_id=0, train_bn=train_bn)
@@ -405,7 +405,7 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
 
 # wozhouh: Backbone of MobileNet-v2
 # Code adopted from:
-# https://github.com/xiaochus/MobileNetV2/blob/master/mobilenet_v2.py
+# https://github.com/JonathanCMitchell/mobilenet_v2_keras/mobilenetv2.py
 
 """MobileNet v2 models for Keras.
 # Reference
@@ -415,117 +415,200 @@ def mobilenetv1_graph(input_image, architecture, alpha=1.0, depth_multiplier=1, 
 """
 
 
-def _bottleneck(inputs, filters, kernel, t, s, r=False, alpha=1.0, block_id=1, train_bn=False):
-    """Bottleneck
-    This function defines a basic bottleneck structure.
-    # Arguments
-        inputs: Tensor, input tensor of conv layer.
-        filters: Integer, the dimensionality of the output space.
-        kernel: An integer or tuple/list of 2 integers, specifying the
-            width and height of the 2D convolution window.
-        t: Integer, expansion factor.
-            t is always applied to the input size.
-        s: An integer or tuple/list of 2 integers,specifying the strides
-            of the convolution along the width and height.Can be a single
-            integer to specify the same value for all spatial dimensions.
-        r: Boolean, Whether to use the residuals.
-    # Returns
-        Output tensor.
-    """
+# This function is taken from the original tf repo. It ensures that all layers have a channel number that is divisible by 8
+# It can be seen here  https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
+def _make_divisible(v, divisor, min_value=None):
+    if min_value is None:
+        min_value = divisor
+    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
+    # Make sure that round down does not go down by more than 10%.
+    if new_v < 0.9 * v:
+        new_v += divisor
+    return new_v
 
-    channel_axis = 1 if K.image_data_format() == 'channels_first' else -1
-    tchannel = K.int_shape(inputs)[channel_axis] * t
-    filters = int(alpha * filters)
 
-    x = _conv_block(inputs, tchannel, alpha, (1, 1), (1, 1), block_id=block_id, train_bn=train_bn)
+def _inverted_res_block(inputs, expansion, stride, alpha, filters, block_id):
+    in_channels = inputs._keras_shape[-1]
+    prefix = 'features.' + str(block_id) + '.conv.'
+    pointwise_conv_filters = int(filters * alpha)
+    pointwise_filters = _make_divisible(pointwise_conv_filters, 8)
 
-    x = KL.DepthwiseConv2D(kernel,
-                           strides=(s, s),
-                           depth_multiplier=1,
-                           padding='same',
-                           name='conv_dw_{}'.format(block_id))(x)
-    x = BatchNorm(axis=channel_axis, name='conv_dw_{}_bn'.format(block_id))(x, training=train_bn)
-    x = KL.Activation(relu6, name='conv_dw_{}_relu'.format(block_id))(x)
+    # Expand
+    x = KL.Conv2D(expansion * in_channels, kernel_size=1, padding='same',
+                  use_bias=False, activation=None,
+                  name='mobl%d_conv_expand' % block_id)(inputs)
+    x = KL.BatchNormalization(epsilon=1e-3, momentum=0.999,
+                              name='bn%d_conv_bn_expand' % block_id)(x)
+    x = KL.Activation(relu6, name='conv_%d_relu' % block_id)(x)
 
-    x = KL.Conv2D(filters,
-                  (1, 1),
-                  strides=(1, 1),
+    # Depthwise
+    x = KL.DepthwiseConv2D(kernel_size=3, strides=stride, activation=None,
+                           use_bias=False, padding='same',
+                           name='mobl%d_conv_depthwise' % block_id)(x)
+    x = KL.BatchNormalization(epsilon=1e-3, momentum=0.999,
+                              name='bn%d_conv_depthwise' % block_id)(x)
+
+    x = KL.Activation(relu6, name='conv_dw_%d_relu' % block_id)(x)
+
+    # Project
+    x = KL.Conv2D(pointwise_filters,
+                  kernel_size=1, padding='same', use_bias=False, activation=None,
+                  name='mobl%d_conv_project' % block_id)(x)
+    x = KL.BatchNormalization(epsilon=1e-3, momentum=0.999,
+                              name='bn%d_conv_bn_project' % block_id)(x)
+
+    if in_channels == pointwise_filters and stride == 1:
+        return KL.Add(name='res_connect_' + str(block_id))([inputs, x])
+
+    return x
+
+
+def _first_inverted_res_block(inputs, expansion, stride, alpha, filters, block_id):
+    in_channels = inputs._keras_shape[-1]
+    prefix = 'features.' + str(block_id) + '.conv.'
+    pointwise_conv_filters = int(filters * alpha)
+    pointwise_filters = _make_divisible(pointwise_conv_filters, 8)
+
+    # Depthwise
+    x = KL.DepthwiseConv2D(kernel_size=3,
+                           strides=stride, activation=None,
+                           use_bias=False, padding='same',
+                           name='mobl%d_conv_depthwise' %
+                                block_id)(inputs)
+    x = KL.BatchNormalization(epsilon=1e-3, momentum=0.999,
+                              name='bn%d_conv_depthwise' %
+                                   block_id)(x)
+    x = KL.Activation(relu6, name='conv_dw_%d_relu' % block_id)(x)
+
+    # Project
+    x = KL.Conv2D(pointwise_filters,
+                  kernel_size=1,
                   padding='same',
-                  name='conv_pw_{}'.format(block_id))(x)
-    x = BatchNorm(axis=channel_axis, name='conv_pw_{}_bn'.format(block_id))(x, training=train_bn)
+                  use_bias=False,
+                  activation=None,
+                  name='mobl%d_conv_project' %
+                       block_id)(x)
+    x = KL.BatchNormalization(epsilon=1e-3, momentum=0.999,
+                              name='bn%d_conv_project' %
+                                   block_id)(x)
 
-    if r:
-        x = KL.add([x, inputs], name='res{}'.format(block_id))
-    return x
-
-
-def _inverted_residual_block(inputs, filters, kernel, t, strides, n, alpha, block_id, train_bn):
-    """Inverted Residual Block
-    This function defines a sequence of 1 or more identical layers.
-    # Arguments
-        inputs: Tensor, input tensor of conv layer.
-        filters: Integer, the dimensionality of the output space.
-        kernel: An integer or tuple/list of 2 integers, specifying the
-            width and height of the 2D convolution window.
-        t: Integer, expansion factor.
-            t is always applied to the input size.
-        s: An integer or tuple/list of 2 integers,specifying the strides
-            of the convolution along the width and height.Can be a single
-            integer to specify the same value for all spatial dimensions.
-        n: Integer, layer repeat times.
-    # Returns
-        Output tensor.
-    """
-
-    x = _bottleneck(inputs, filters, kernel, t, strides, False, alpha, block_id, train_bn)
-
-    for i in range(1, n):
-        block_id += 1
-        x = _bottleneck(x, filters, kernel, t, 1, True, alpha, block_id, train_bn)
+    if in_channels == pointwise_filters and stride == 1:
+        return KL.Add(name='res_connect_' + str(block_id))([inputs, x])
 
     return x
 
 
-def mobilenetv2_graph(input_image, architecture, alpha=1.0, stage5=True, train_bn=False):
+def mobilenetv2_graph(inputs, architecture, alpha=1.0, stage5=True, train_bn=False):
     """MobileNetv2
     This function defines a MobileNetv2 architectures.
     # Arguments
         inputs: Inuput Tensor, e.g. an image
         architecture: to preserve consistency
         alpha: Width Multiplier
-        train_bn: Boolean. Train or freeze Batch Norm layres
+        stage5: Boolean. If False, stage5 of the network is not created
+        train_bn: Boolean. Train or freeze Batch Norm layers
     # Returns
-        five MobileNetv2 model stages.
+        five MobileNet-v2 model stages.
     """
-    assert architecture in ["mobilenetv2"]
+    # first_block_filters = _make_divisible(32 * alpha, 8)
+    #
+    # # Stage 1
+    # x = KL.Conv2D(first_block_filters,
+    #               kernel_size=3,
+    #               strides=(2, 2), padding='same',
+    #               use_bias=False, name='Conv1')(inputs)
+    # x = KL.BatchNormalization(epsilon=1e-3, momentum=0.999, name='bn_Conv1')(x)
+    # x = KL.Activation(relu6, name='Conv1_relu')(x)
+    #
+    # x = _first_inverted_res_block(x,
+    #                               filters=16,
+    #                               alpha=alpha,
+    #                               stride=1,
+    #                               expansion=1,
+    #                               block_id=0)
+    #
+    # x = _inverted_res_block(x, filters=24, alpha=alpha, stride=2,
+    #                         expansion=6, block_id=1)
+    # x = _inverted_res_block(x, filters=24, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=2)
+    #
+    # x = _inverted_res_block(x, filters=32, alpha=alpha, stride=2,
+    #                         expansion=6, block_id=3)
+    # x = _inverted_res_block(x, filters=32, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=4)
+    # x = _inverted_res_block(x, filters=32, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=5)
+    #
+    # x = _inverted_res_block(x, filters=64, alpha=alpha, stride=2,
+    #                         expansion=6, block_id=6)
+    # x = _inverted_res_block(x, filters=64, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=7)
+    # x = _inverted_res_block(x, filters=64, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=8)
+    # x = _inverted_res_block(x, filters=64, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=9)
+    #
+    # x = _inverted_res_block(x, filters=96, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=10)
+    # x = _inverted_res_block(x, filters=96, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=11)
+    # x = _inverted_res_block(x, filters=96, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=12)
+    #
+    # x = _inverted_res_block(x, filters=160, alpha=alpha, stride=2,
+    #                         expansion=6, block_id=13)
+    # x = _inverted_res_block(x, filters=160, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=14)
+    # x = _inverted_res_block(x, filters=160, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=15)
+    #
+    # x = _inverted_res_block(x, filters=320, alpha=alpha, stride=1,
+    #                         expansion=6, block_id=16)
+    #
+    # # no alpha applied to last conv as stated in the paper:
+    # # if the width multiplier is greater than 1 we
+    # # increase the number of output channels
+    # if alpha > 1.0:
+    #     last_block_filters = _make_divisible(1280 * alpha, 8)
+    # else:
+    #     last_block_filters = 1280
+    #
+    # x = Conv2D(last_block_filters,
+    #            kernel_size=1,
+    #            use_bias=False,
+    #            name='Conv_1')(x)
+    # x = BatchNormalization(epsilon=1e-3, momentum=0.999, name='Conv_1_bn')(x)
+    # x = Activation(relu6, name='out_relu')(x)
+    #
+    # # Stage 1
+    # x = _conv_block(input_image, 32, alpha, (3, 3), strides=(2, 2), block_id=0,
+    #                 train_bn=train_bn)  # output: N x 32 x 1/2 x 1/2
+    # C1 = x = _inverted_residual_block(x, 16, (3, 3), t=1, strides=1, n=1, alpha=1.0, block_id=1,
+    #                                   train_bn=train_bn)  # output: N x 16 x 1/2 x 1/2
+    # # Stage 2
+    # C2 = x = _inverted_residual_block(x, 24, (3, 3), t=6, strides=2, n=2, alpha=1.0, block_id=2,
+    #                                   train_bn=train_bn)  # output: N x 24 x 1/4 x 1/4
+    # # Stage 3
+    # C3 = x = _inverted_residual_block(x, 32, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=4,
+    #                                   train_bn=train_bn)  # output: N x 32 x 1/8 x 1/8
+    # # Stage 4
+    # x = _inverted_residual_block(x, 64, (3, 3), t=6, strides=2, n=4, alpha=1.0, block_id=7,
+    #                              train_bn=train_bn)  # output: N x 64 x 1/16 x 1/16
+    # C4 = x = _inverted_residual_block(x, 96, (3, 3), t=6, strides=1, n=3, alpha=1.0, block_id=11,
+    #                                   train_bn=train_bn)  # output: N x 96 x 1/16 x 1/16
+    # # Stage 5
+    # if stage5:
+    #     x = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14,
+    #                                  train_bn=train_bn)  # output: N x 160 x 1/32 x 1/32
+    #     C5 = x = _inverted_residual_block(x, 320, (3, 3), t=6, strides=1, n=1, alpha=1.0, block_id=17,
+    #                                       train_bn=train_bn)  # output: N x 320 x 1/32 x 1/32
+    # else:
+    #     C5 = None
+    # # x = _conv_block(x, 1280, alpha, (1, 1), strides=(1, 1), block_id=18, train_bn=train_bn)
+    #
+    # return [C1, C2, C3, C4, C5]
 
-    # Stage 1
-    x = _conv_block(input_image, 32, alpha, (3, 3), strides=(2, 2), block_id=0,
-                    train_bn=train_bn)  # output: N x 32 x 1/2 x 1/2
-    C1 = x = _inverted_residual_block(x, 16, (3, 3), t=1, strides=1, n=1, alpha=1.0, block_id=1,
-                                      train_bn=train_bn)  # output: N x 16 x 1/2 x 1/2
-    # Stage 2
-    C2 = x = _inverted_residual_block(x, 24, (3, 3), t=6, strides=2, n=2, alpha=1.0, block_id=2,
-                                      train_bn=train_bn)  # output: N x 24 x 1/4 x 1/4
-    # Stage 3
-    C3 = x = _inverted_residual_block(x, 32, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=4,
-                                      train_bn=train_bn)  # output: N x 32 x 1/8 x 1/8
-    # Stage 4
-    x = _inverted_residual_block(x, 64, (3, 3), t=6, strides=2, n=4, alpha=1.0, block_id=7,
-                                 train_bn=train_bn)  # output: N x 64 x 1/16 x 1/16
-    C4 = x = _inverted_residual_block(x, 96, (3, 3), t=6, strides=1, n=3, alpha=1.0, block_id=11,
-                                      train_bn=train_bn)  # output: N x 96 x 1/16 x 1/16
-    # Stage 5
-    if stage5:
-        x = _inverted_residual_block(x, 160, (3, 3), t=6, strides=2, n=3, alpha=1.0, block_id=14,
-                                     train_bn=train_bn)  # output: N x 160 x 1/32 x 1/32
-        C5 = x = _inverted_residual_block(x, 320, (3, 3), t=6, strides=1, n=1, alpha=1.0, block_id=17,
-                                          train_bn=train_bn)  # output: N x 320 x 1/32 x 1/32
-    else:
-        C5 = None
-    # x = _conv_block(x, 1280, alpha, (1, 1), strides=(1, 1), block_id=18, train_bn=train_bn)
-
-    return [C1, C2, C3, C4, C5]
+    return None
 
 
 ############################################################
@@ -967,10 +1050,11 @@ class PyramidPSROIAlign(KE.Layer):
     Note that channel(output) = ps_channels(input) / (pool_shape[0] * pool_shape[1])
     """
 
-    def __init__(self, pool_shape, **kwargs):
+    def __init__(self, pool_shape, input_channels, **kwargs):
         super(PyramidPSROIAlign, self).__init__(**kwargs)
         self.pool_shape = tuple(pool_shape)
         self.roi_bin_num = self.pool_shape[0] * self.pool_shape[1]
+        self.output_channels = int(input_channels / self.roi_bin_num)
 
     def call(self, inputs):
         # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
@@ -983,9 +1067,6 @@ class PyramidPSROIAlign(KE.Layer):
         # Feature Maps. List of feature maps from different levels of the
         # feature pyramid. Each is [batch, height, width, channels]
         psroi_score_maps = inputs[2:]
-
-        batch_size = tf.cast(tf.shape(psroi_score_maps[0])[0], tf.int32)
-        channels = tf.cast((tf.shape(psroi_score_maps[0])[-1] / self.roi_bin_num), tf.int32)
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
         y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes]
@@ -1049,14 +1130,17 @@ class PyramidPSROIAlign(KE.Layer):
                     # perform alignment by interpolation: [num_boxes_level, 1, 1, channels]
                     bin_align = tf.image.crop_and_resize(
                         psroi_score_map_bins[bin_idx], bin_boxes, box_indices, (1, 1), method="bilinear")
-                    pooled_bin_concat.append(tf.reshape(bin_align, [batch_size, channels, 1]))
+                    # [num_boxes_level, 1, 1, channels]
+                    pooled_bin_concat.append(tf.reshape(bin_align, shape=[-1, self.output_channels, 1]))
 
             # concat the pooled values of every bin together to get a pooled feature map
             pooled_bin_concat = tf.concat(pooled_bin_concat, axis=2)
-            pooled_bin_reshape = tf.reshape(pooled_bin_concat, [batch_size, channels, self.pool_shape[0], self.pool_shape[1]])
-            pooled.append(tf.transpose(pooled_bin_reshape, [0, 2, 3, 1]))
+            pooled_bin_reshape = tf.reshape(pooled_bin_concat,
+                                            shape=[-1, self.output_channels, self.pool_shape[0], self.pool_shape[1]])
+            pooled.append(
+                tf.transpose(pooled_bin_reshape, [0, 2, 3, 1]))  # [num_boxes_level, pool_height, pool_width, channels]
 
-        # Pack pooled features into one tensor
+        # Pack pooled features into one tensor (accumulation of 'num_boxes_level' equals 'batch * num_boxes')
         pooled = tf.concat(pooled, axis=0)  # [batch * num_boxes, pool_height, pool_width, channels]
 
         # Pack box_to_level mapping into one array and add another
@@ -1080,7 +1164,7 @@ class PyramidPSROIAlign(KE.Layer):
         return pooled
 
     def compute_output_shape(self, input_shape):
-        return input_shape[0][:2] + self.pool_shape + (int(input_shape[2][-1] / self.roi_bin_num),)
+        return input_shape[0][:2] + self.pool_shape + (self.output_channels,)
         # [batch, num_boxes, pool_shape, pool_shape, channels]
 
 
@@ -1534,7 +1618,7 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 ############################################################
 
 # wozhouh: utilized by light-head R-CNN to thinner the feature maps at the front of the detection-head
-def large_separable_conv_graph(feature_map, channels_mid=256, channels_out=490, kernel_size=15):
+def large_separable_conv_graph(feature_map, kernel_size, channels_mid, channels_out):
     branch_0a = KL.Conv2D(filters=channels_mid, kernel_size=(kernel_size, 1), strides=1,
                           padding="SAME", use_bias=True, activation=None,
                           name="light_head_large_separable_conv_0a")(feature_map)
@@ -1553,9 +1637,9 @@ def large_separable_conv_graph(feature_map, channels_mid=256, channels_out=490, 
     return x
 
 
-def build_large_separable_conv_model(depth):
+def build_large_separable_conv_model(depth, kernel_size, channels_mid, channels_out):
     input_feature_map = KL.Input(shape=[None, None, depth], name="input_large_separable_feature_map")
-    output_feature_map = large_separable_conv_graph(input_feature_map)
+    output_feature_map = large_separable_conv_graph(input_feature_map, kernel_size, channels_mid, channels_out)
     return KM.Model([input_feature_map], output_feature_map, name="large_separable_conv")
 
 
@@ -1621,15 +1705,21 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
 
 # the detection-head for light-head R-CNN
 def light_head_classifier_graph(rois, feature_maps, image_meta,
-                                pool_size, num_classes, pyramid_size, train_bn=False,
+                                pool_size, num_classes, pyramid_size,
+                                large_separable_kernel_size=15,
+                                large_separable_channels_mid=256,
+                                large_separable_channels_out=490,
+                                train_bn=None,
                                 fc_layers_size=2048):
-    large_separable_conv = build_large_separable_conv_model(pyramid_size)
+    large_separable_conv = build_large_separable_conv_model(pyramid_size, large_separable_kernel_size,
+                                                            large_separable_channels_mid, large_separable_channels_out)
 
     thinner_feature_maps = []
     for feature_map in feature_maps:
         thinner_feature_maps.append(large_separable_conv([feature_map]))
 
-    x = PyramidPSROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + thinner_feature_maps)
+    x = PyramidPSROIAlign([pool_size, pool_size], large_separable_channels_out,
+                          name="roi_align_classifier")([rois, image_meta] + thinner_feature_maps)
 
     # Only one fully-connected layer (also implemented with Conv2D for consistency)
     x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
@@ -2763,6 +2853,9 @@ class MaskRCNN:
                 mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
                     light_head_classifier_graph(rois, mrcnn_feature_maps, input_image_meta,
                                                 config.POOL_SIZE, config.NUM_CLASSES, config.TOP_DOWN_PYRAMID_SIZE,
+                                                config.LARGE_SEPARABLE_KERNEL_SIZE,
+                                                config.LARGE_SEPARABLE_CHANNELS_MID,
+                                                config.LARGE_SEPARABLE_CHANNELS_OUT,
                                                 train_bn=config.TRAIN_BN,
                                                 fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
             else:
@@ -2818,6 +2911,9 @@ class MaskRCNN:
                 mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
                     light_head_classifier_graph(rpn_rois, mrcnn_feature_maps, input_image_meta,
                                                 config.POOL_SIZE, config.NUM_CLASSES, config.TOP_DOWN_PYRAMID_SIZE,
+                                                config.LARGE_SEPARABLE_KERNEL_SIZE,
+                                                config.LARGE_SEPARABLE_CHANNELS_MID,
+                                                config.LARGE_SEPARABLE_CHANNELS_OUT,
                                                 train_bn=config.TRAIN_BN,
                                                 fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
 
@@ -3131,31 +3227,42 @@ class MaskRCNN:
             # All layers
             "all": ".*",
             # Light-Head
-            "light-head": r"(light_head\_.*)"
+            "light-head": r"(light_head\_.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"
         }
         stage_regex = {}
         if self.config.BACKBONE in ["resnet50", "resnet101"]:
-            # From a specific Resnet stage and up
+            # From a specific ResNet stage and up
             stage_regex = {"3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
                            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
                            "5+": r"(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"}
         elif self.config.BACKBONE in ["mobilenetv1"]:
-            # From a specific Mobilenetv1 stage and up
+            # From a specific MobileNet-v1 stage and up
             stage_regex = {
-                "3+": r"(conv.*5.*)|(conv.*6.*)|(conv.*7.*)|(conv.*8.*)|(conv.*9.*)|(conv.*10.*)|"
-                      r"(conv.*11.*)|(conv.*12.*)|(conv.*13.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
-                "4+": r"(conv.*11.*)|(conv.*12.*)|(bn4.*)|(mob5.*)|(bn5.*)|"
-                      r"(conv.*13.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
-                "5+": r"(conv.*13.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"}
+                # # the following stage partition is defined by GustavZ
+                # "3+": r"(conv.*5.*)|(conv.*6.*)|(conv.*7.*)|(conv.*8.*)|(conv.*9.*)|(conv.*10.*)|"
+                #       r"(conv.*11.*)|(conv.*12.*)|(conv.*13.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+                # "4+": r"(conv.*11.*)|(conv.*12.*)|(bn4.*)|(mob5.*)|(bn5.*)|"
+                #       r"(conv.*13.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+                # "5+": r"(conv.*13.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"}
+                "3+": r"(conv.*13.*)|(conv.*12.*)|(conv.*11.*)|(conv.*10.*)|"
+                      r"(conv.*9.*)|(conv.*8.*)|(conv.*7.*)|(conv.*6.*)|"
+                      r"(conv.*5.*)|(conv.*4.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+                "4+": r"(conv.*13.*)|(conv.*12.*)|(conv.*11.*)|(conv.*10.*)|"
+                      r"(conv.*9.*)|(conv.*8.*)|(conv.*7.*)|(conv.*6.*)|"
+                      r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+                "5+": r"(conv.*13.*)|(conv.*12.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"
+            }
         elif self.config.BACKBONE in ["mobilenetv2"]:
-            # From a specific Mobilenetv2 stage and up
+            # From a specific MobileNet-v2 stage and up
             stage_regex = {
-                "3+": r"(conv.*6.*)|(conv.*7.*)|(conv.*8.*)|(conv.*9.*)|(conv.*10.*)|(conv.*11.*)|(conv.*12.*)|"
-                      r"(conv.*13.*)|(conv.*14.*)|(conv.*15.*)|(conv.*16.*)|"
-                      r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|("r"fpn\_.*)",
-                "4+": r"(conv.*13.*)|(conv.*14.*)|(conv.*15.*)|(conv.*16.*)|"
-                      r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|("r"fpn\_.*)",
-                "5+": r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"}
+                # # the following stage partition is defined by GustavZ
+                # "3+": r"(conv.*6.*)|(conv.*7.*)|(conv.*8.*)|(conv.*9.*)|(conv.*10.*)|(conv.*11.*)|(conv.*12.*)|"
+                #       r"(conv.*13.*)|(conv.*14.*)|(conv.*15.*)|(conv.*16.*)|"
+                #       r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|("r"fpn\_.*)",
+                # "4+": r"(conv.*13.*)|(conv.*14.*)|(conv.*15.*)|(conv.*16.*)|"
+                #       r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|("r"fpn\_.*)",
+                # "5+": r"(conv.*17.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"
+            }
 
         layer_regex.update(stage_regex)
 
@@ -3208,7 +3315,7 @@ class MaskRCNN:
             callbacks=callbacks,
             validation_data=val_generator,
             validation_steps=self.config.VALIDATION_STEPS,
-            max_queue_size=100,
+            max_queue_size=30,
             workers=workers,
             use_multiprocessing=True,
         )

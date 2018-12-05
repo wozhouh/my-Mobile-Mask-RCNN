@@ -219,6 +219,11 @@ class Config(object):
     # "mobile": replace the 3x3 convolution above with the pair of one depth-wise and one point-wise convolution
     MASK_HEAD = "original"
 
+    # large separable convolution utilized in light-head for larger reception-field
+    LARGE_SEPARABLE_KERNEL_SIZE = 15
+    LARGE_SEPARABLE_CHANNELS_MID = 256
+    LARGE_SEPARABLE_CHANNELS_OUT = 490  # should be double divided by POOL_SHAPE for the convenience of PSROI-align
+
     def __init__(self):
         """Set values of computed attributes."""
         # Effective batch size
