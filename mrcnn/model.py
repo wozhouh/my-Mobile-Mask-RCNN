@@ -990,7 +990,7 @@ class PyramidPSROIAlign(KE.Layer):
         psroi_score_maps = inputs[2:]
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
-        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes]
+        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
         h = y2 - y1
         w = x2 - x1
         # Use shape of first image. Images in a batch must have the same size.
@@ -1030,10 +1030,10 @@ class PyramidPSROIAlign(KE.Layer):
             # which is how it's done in tf.crop_and_resize()
 
             pooled_bin_concat = []  # list of aligned values of every bin: [num_boxes_level, channels, 1] x roi_bin_num
-            level_y1, level_x1, level_y2, level_x2 = tf.split(level_boxes, 4, axis=1)  # [num_boxes_level, 1]
+            level_y1, level_x1, level_y2, level_x2 = tf.split(level_boxes, 4, axis=-1)  # [num_boxes_level, 1]
             level_h_bin = (level_y2 - level_y1) / self.pool_shape[0]  # [num_boxes_level, 1]
             level_w_bin = (level_x2 - level_x1) / self.pool_shape[1]  # [num_boxes_level, 1]
-            psroi_score_map_bins = tf.split(psroi_score_maps[i], self.roi_bin_num, axis=3)
+            psroi_score_map_bins = tf.split(psroi_score_maps[i], self.roi_bin_num, axis=-1)
             # list of feature maps: [batch, feature_map_h, feature_map_w, channels(10)] x roi_bin_num(7x7)
 
             # iterate over each bin of a RoI
@@ -2777,7 +2777,7 @@ class MaskRCNN:
                                                 config.LARGE_SEPARABLE_KERNEL_SIZE,
                                                 config.LARGE_SEPARABLE_CHANNELS_MID,
                                                 config.LARGE_SEPARABLE_CHANNELS_OUT,
-                                                train_bn=config.TRAIN_BN,
+                                                train_bn=None,
                                                 fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE)
             else:
                 mrcnn_class_logits, mrcnn_class, mrcnn_bbox = \
@@ -3218,7 +3218,7 @@ class MaskRCNN:
                                          augmentation=augmentation,
                                          batch_size=self.config.BATCH_SIZE,
                                          no_augmentation_sources=no_augmentation_sources)
-        val_generator = data_generator(val_dataset, self.config, shuffle=False,
+        val_generator = data_generator(val_dataset, self.config, shuffle=True,
                                        batch_size=self.config.BATCH_SIZE)
 
         # Create log_dir if it does not exist
