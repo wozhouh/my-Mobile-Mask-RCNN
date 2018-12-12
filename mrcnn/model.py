@@ -1539,28 +1539,31 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 ############################################################
 
 # wozhouh: utilized by light-head R-CNN to thinner the feature maps at the front of the detection-head
-def large_separable_conv_graph(feature_map, kernel_size, channels_mid, channels_out):
+def large_separable_conv_graph(feature_map, kernel_size, channels_mid, channels_out, train_bn=None):
+    base_name = "light_head_large_separable_"
     branch_0a = KL.Conv2D(filters=channels_mid, kernel_size=(kernel_size, 1), strides=1,
                           padding="SAME", use_bias=True, activation=None,
-                          name="light_head_large_separable_conv_0a")(feature_map)
+                          name=base_name + "conv_0a")(feature_map)
     branch_0b = KL.Conv2D(filters=channels_out, kernel_size=(1, kernel_size), strides=1,
                           padding="SAME", use_bias=True, activation=None,
-                          name="light_head_large_separable_conv_0b")(branch_0a)
+                          name=base_name + "conv_0b")(branch_0a)
     branch_1a = KL.Conv2D(filters=channels_mid, kernel_size=(1, kernel_size), strides=1,
                           padding="SAME", use_bias=True, activation=None,
-                          name="light_head_large_separable_conv_1a")(feature_map)
+                          name=base_name + "conv_1a")(feature_map)
     branch_1b = KL.Conv2D(filters=channels_out, kernel_size=(kernel_size, 1), strides=1,
                           padding="SAME", use_bias=True, activation=None,
-                          name="light_head_large_separable_conv_1b")(branch_1a)
-    x = KL.Add(name="light_head_large_separable_add")([branch_0b, branch_1b])
-    x = KL.Activation('relu', name="light_head_large_separable_relu")(x)
+                          name=base_name + "conv_1b")(branch_1a)
+    x = KL.Add(name=base_name + "add")([branch_0b, branch_1b])
+    x = BatchNorm(name=base_name + "bn")(x, training=train_bn)
+    x = KL.Activation('relu', name=base_name + "relu")(x)
 
     return x
 
 
-def build_large_separable_conv_model(depth, kernel_size, channels_mid, channels_out):
-    input_feature_map = KL.Input(shape=[None, None, depth], name="input_large_separable_feature_map")
-    output_feature_map = large_separable_conv_graph(input_feature_map, kernel_size, channels_mid, channels_out)
+def build_large_separable_conv_model(depth, kernel_size, channels_mid, channels_out, train_bn=None):
+    input_feature_map = KL.Input(shape=[None, None, depth], name="large_separable_input")
+    output_feature_map = large_separable_conv_graph(input_feature_map, kernel_size,
+                                                    channels_mid, channels_out, train_bn=train_bn)
     return KM.Model([input_feature_map], output_feature_map, name="large_separable_conv")
 
 
@@ -1633,14 +1636,15 @@ def light_head_classifier_graph(rois, feature_maps, image_meta,
                                 train_bn=None,
                                 fc_layers_size=2048):
     large_separable_conv = build_large_separable_conv_model(pyramid_size, large_separable_kernel_size,
-                                                            large_separable_channels_mid, large_separable_channels_out)
+                                                            large_separable_channels_mid, large_separable_channels_out,
+                                                            train_bn=train_bn)
 
     thinner_feature_maps = []
     for feature_map in feature_maps:
         thinner_feature_maps.append(large_separable_conv([feature_map]))
 
     x = PyramidPSROIAlign([pool_size, pool_size], large_separable_channels_out,
-                          name="roi_align_classifier")([rois, image_meta] + thinner_feature_maps)
+                          name="psroi_align_classifier")([rois, image_meta] + thinner_feature_maps)
 
     # Only one fully-connected layer (also implemented with Conv2D for consistency)
     x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
@@ -3148,7 +3152,8 @@ class MaskRCNN:
             # All layers
             "all": ".*",
             # Light-Head
-            "light-head": r"(light_head\_.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)"
+            "light-head": r"(light_head\_.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "light-head-detection": r"(light_head\_.*)"
         }
         stage_regex = {}
         if self.config.BACKBONE in ["resnet50", "resnet101"]:
