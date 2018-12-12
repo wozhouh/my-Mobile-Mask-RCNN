@@ -1,4 +1,4 @@
-This repository wishes to dig deeper into the potential of Mask-RCNN when deployed on a mobile device.
+This repository wishes to dig deeper into the potential of Mask R-CNN when deployed on a mobile device by means of pruning, distilling, quantization and other popular optimizations.
 
 # Mask R-CNN for Object Detection and Segmentation
 
