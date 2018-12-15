@@ -101,8 +101,8 @@ def s_conv_block(input_tensor, kernel_size, filters, stage, block, prefix='s_',
     x = modellib.BatchNorm(name=bn_name_base + '2b')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
-    x = KL.Conv2D(nb_filter3, (1, 1), name=conv_name_base +
-                                           '2c', use_bias=use_bias)(x)
+    x = KL.Conv2D(nb_filter3, (1, 1),
+                  name=conv_name_base + '2c', use_bias=use_bias)(x)
     x = modellib.BatchNorm(name=bn_name_base + '2c')(x, training=train_bn)
 
     shortcut = KL.Conv2D(nb_filter3, (1, 1), strides=strides,
@@ -128,7 +128,8 @@ def s_resnet_graph(input_image, architecture, prefix='s_', train_bn=None):
     x = KL.Conv2D(64, (7, 7), strides=(2, 2), name=prefix + 'conv1', use_bias=True)(x)
     x = modellib.BatchNorm(name=prefix + 'bn_conv1')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    C1 = x = KL.MaxPooling2D((3, 3), strides=(2, 2), padding="same")(x)  # output: N x 64 x 1/4 x 1/4
+    C1 = x = KL.MaxPooling2D((3, 3), strides=(2, 2), padding="same")(x)
+    # output: N x 64 x 1/4 x 1/4
 
     # Stage 2
     x = s_conv_block(x, 3, [64, 64, 256], stage=2, block='a', prefix=prefix, strides=(1, 1), train_bn=train_bn)
@@ -620,7 +621,7 @@ class MimicMaskRCNN(modellib.MaskRCNN):
 
     def __init__(self, mode, config, model_dir):
         """
-        mode: Either "training" or "inference"
+        mode: Either "training_RPN" , "training_all" or "inference"
         config: A Sub-class of the Config class
         model_dir: Directory to save training logs and trained weights
         """
