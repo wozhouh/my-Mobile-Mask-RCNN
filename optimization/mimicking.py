@@ -484,6 +484,31 @@ def rpn_mimic_loss_graph(student_pooled, teacher_pooled):
     return tf.reduce_mean(tf.square(student_pooled - teacher_pooled)) / 2.0
 
 
+def rpn_mimic_loss_graph(student_maps, teacher_maps, boxes, image_meta):
+    # Assign each ROI to a level in the pyramid based on the ROI area.
+    y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
+    h = y2 - y1
+    w = x2 - x1
+    # Use shape of first image. Images in a batch must have the same size.
+    image_shape = modellib.parse_image_meta_graph(image_meta)['image_shape'][0]
+    # Equation 1 in the Feature Pyramid Networks paper. Account for
+    # the fact that our coordinates are normalized here.
+    # e.g. a 224x224 ROI (in pixels) maps to P4
+    image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
+    roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
+    roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
+    roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
+
+    for i, level in enumerate(range(2, 6)):
+        ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
+        level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
+        box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
+
+
+
+    return 0.
+
+
 ############################################################
 #  Data
 ############################################################
@@ -741,7 +766,6 @@ class MimicMaskRCNN(modellib.MaskRCNN):
                                      name="s_roi_align")([s_rpn_rois, input_image_meta] + s_transformed_maps)
         pooled = modellib.PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
                                           name="roi_align")([s_rpn_rois, input_image_meta] + mrcnn_feature_maps)
-        # output: batch x num_boxes x config.POOL_SIZE(7) x config.POOL_SIZE(7) x config.TOP_DOWN_PYRAMID_SIZE(256)
 
         # Losses
         rpn_class_loss = KL.Lambda(lambda x: modellib.rpn_class_loss_graph(*x), name="rpn_class_loss")(
