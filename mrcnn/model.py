@@ -948,7 +948,7 @@ class PyramidROIAlign(KE.Layer):
         # [batch_size, num_bboxes, pool_shape(7), pool_shape(7), FPN_channels(256)]
 
 
-# wozhouh: add position-sensitive ROI-align, which refers to the PyramidROIAlign layer above
+# wozhouh: add position-sensitive ROI-Align, which refers to the PyramidROIAlign layer above
 class PyramidPSROIAlign(KE.Layer):
     """Implements position-sensitive ROI Align on multiple levels of the feature pyramid.
 
@@ -1008,10 +1008,10 @@ class PyramidPSROIAlign(KE.Layer):
         box_to_level = []
         for i, level in enumerate(range(2, 6)):
             ix = tf.where(tf.equal(roi_level, level))
-            level_boxes = tf.gather_nd(boxes, ix)  # [level_num_boxes_level, 4]
+            level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
 
             # Box indices for crop_and_resize (specify which image the bbox refers to)
-            box_indices = tf.cast(ix[:, 0], tf.int32)  # [level_num_boxes]
+            box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
 
             # Keep track of which box is mapped to which level
             box_to_level.append(ix)

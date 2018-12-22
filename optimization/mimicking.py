@@ -357,116 +357,116 @@ class s_ProposalLayer(KE.Layer):
         return (None, self.proposal_count, 4)
 
 
-############################################################
-#  ROIAlign Layer for student network
-############################################################
-
-class s_PyramidROIAlign(KE.Layer):
-    """Implements ROI Align on multiple levels of the feature pyramid.
-
-    Params:
-    - pool_shape: [pool_height, pool_width] of the output pooled regions. Usually [7, 7]
-
-    Inputs:
-    - boxes: [batch, num_boxes, (y1, x1, y2, x2)] in normalized
-             coordinates. Possibly padded with zeros if not enough
-             boxes to fill the array.
-    - image_meta: [batch, (meta data)] Image details. See compose_image_meta()
-    - feature_maps: List of feature maps from different levels of the pyramid.
-                    Each is [batch, height, width, channels]
-
-    Output:
-    Pooled regions in the shape: [batch, num_boxes, pool_height, pool_width, channels].
-    The width and height are those specific in the pool_shape in the layer
-    constructor.
-    """
-
-    def __init__(self, pool_shape, **kwargs):
-        super(s_PyramidROIAlign, self).__init__(**kwargs)
-        self.pool_shape = tuple(pool_shape)
-
-    def call(self, inputs):
-        # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
-        boxes = inputs[0]
-
-        # Image meta
-        # Holds details about the image. See compose_image_meta()
-        image_meta = inputs[1]
-
-        # Feature Maps. List of feature maps from different levels of the
-        # feature pyramid. Each is [batch, height, width, channels]
-        feature_maps = inputs[2:]
-
-        # Assign each ROI to a level in the pyramid based on the ROI area.
-        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
-        h = y2 - y1
-        w = x2 - x1
-        # Use shape of first image. Images in a batch must have the same size.
-        image_shape = modellib.parse_image_meta_graph(image_meta)['image_shape'][0]
-        # Equation 1 in the Feature Pyramid Networks paper. Account for
-        # the fact that our coordinates are normalized here.
-        # e.g. a 224x224 ROI (in pixels) maps to P4
-        image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
-        roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-        roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
-        roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
-
-        # Loop through levels and apply ROI pooling to each. P2 to P5.
-        pooled = []
-        box_to_level = []
-        for i, level in enumerate(range(2, 6)):
-            ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
-            level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
-
-            # Box indices for crop_and_resize (specify which image the bbox refers to)
-            box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
-
-            # Keep track of which box is mapped to which level
-            box_to_level.append(ix)
-
-            # Stop gradient propagation to ROI proposals
-            level_boxes = tf.stop_gradient(level_boxes)
-            box_indices = tf.stop_gradient(box_indices)
-
-            # Crop and Resize
-            # From Mask R-CNN paper: "We sample four regular locations, so
-            # that we can evaluate either max or average pooling. In fact,
-            # interpolating only a single value at each bin center (without
-            # pooling) is nearly as effective."
-            #
-            # Here we use the simplified approach of a single value per bin,
-            # which is how it's done in tf.crop_and_resize()
-            # Result: [batch * num_boxes, pool_height, pool_width, channels]
-            pooled.append(tf.image.crop_and_resize(
-                feature_maps[i], level_boxes, box_indices, self.pool_shape, method="bilinear"))
-
-        # Pack pooled features into one tensor
-        pooled = tf.concat(pooled, axis=0)  # [batch * num_boxes, pool_height, pool_width, channels]
-
-        # Pack box_to_level mapping into one array and add another
-        # column representing the order of pooled boxes
-        # box_to_level: list of shape [batch, num_boxes, 1] for every pyramid level
-        box_to_level = tf.concat(box_to_level, axis=0)  # [4, batch, num_boxes, 1]
-        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
-        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)  # [4, batch, num_boxes, 2]
-
-        # Rearrange pooled features to match the order of the original boxes
-        # Sort box_to_level by batch then box index
-        # TF doesn't have a way to sort by two columns, so merge them and sort.
-        sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
-        ix = tf.nn.top_k(sorting_tensor, k=tf.shape(
-            box_to_level)[0]).indices[::-1]
-        ix = tf.gather(box_to_level[:, 2], ix)
-        pooled = tf.gather(pooled, ix)
-
-        # Re-add the batch dimension
-        shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
-        pooled = tf.reshape(pooled, shape)  # [batch, num_boxes, 7, 7, 256]]
-        return pooled
-
-    def compute_output_shape(self, input_shape):
-        return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1],)
-        # [batch_size, num_bboxes, pool_shape(7), pool_shape(7), FPN_channels(256)]
+# ############################################################
+# #  ROIAlign Layer for student network
+# ############################################################
+#
+# class s_PyramidROIAlign(KE.Layer):
+#     """Implements ROI Align on multiple levels of the feature pyramid.
+#
+#     Params:
+#     - pool_shape: [pool_height, pool_width] of the output pooled regions. Usually [7, 7]
+#
+#     Inputs:
+#     - boxes: [batch, num_boxes, (y1, x1, y2, x2)] in normalized
+#              coordinates. Possibly padded with zeros if not enough
+#              boxes to fill the array.
+#     - image_meta: [batch, (meta data)] Image details. See compose_image_meta()
+#     - feature_maps: List of feature maps from different levels of the pyramid.
+#                     Each is [batch, height, width, channels]
+#
+#     Output:
+#     Pooled regions in the shape: [batch, num_boxes, pool_height, pool_width, channels].
+#     The width and height are those specific in the pool_shape in the layer
+#     constructor.
+#     """
+#
+#     def __init__(self, pool_shape, **kwargs):
+#         super(s_PyramidROIAlign, self).__init__(**kwargs)
+#         self.pool_shape = tuple(pool_shape)
+#
+#     def call(self, inputs):
+#         # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
+#         boxes = inputs[0]
+#
+#         # Image meta
+#         # Holds details about the image. See compose_image_meta()
+#         image_meta = inputs[1]
+#
+#         # Feature Maps. List of feature maps from different levels of the
+#         # feature pyramid. Each is [batch, height, width, channels]
+#         feature_maps = inputs[2:]
+#
+#         # Assign each ROI to a level in the pyramid based on the ROI area.
+#         y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
+#         h = y2 - y1
+#         w = x2 - x1
+#         # Use shape of first image. Images in a batch must have the same size.
+#         image_shape = modellib.parse_image_meta_graph(image_meta)['image_shape'][0]
+#         # Equation 1 in the Feature Pyramid Networks paper. Account for
+#         # the fact that our coordinates are normalized here.
+#         # e.g. a 224x224 ROI (in pixels) maps to P4
+#         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
+#         roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
+#         roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
+#         roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
+#
+#         # Loop through levels and apply ROI pooling to each. P2 to P5.
+#         pooled = []
+#         box_to_level = []
+#         for i, level in enumerate(range(2, 6)):
+#             ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
+#             level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
+#
+#             # Box indices for crop_and_resize (specify which image the bbox refers to)
+#             box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
+#
+#             # Keep track of which box is mapped to which level
+#             box_to_level.append(ix)
+#
+#             # Stop gradient propagation to ROI proposals
+#             level_boxes = tf.stop_gradient(level_boxes)
+#             box_indices = tf.stop_gradient(box_indices)
+#
+#             # Crop and Resize
+#             # From Mask R-CNN paper: "We sample four regular locations, so
+#             # that we can evaluate either max or average pooling. In fact,
+#             # interpolating only a single value at each bin center (without
+#             # pooling) is nearly as effective."
+#             #
+#             # Here we use the simplified approach of a single value per bin,
+#             # which is how it's done in tf.crop_and_resize()
+#             # Result: [batch * num_boxes, pool_height, pool_width, channels]
+#             pooled.append(tf.image.crop_and_resize(
+#                 feature_maps[i], level_boxes, box_indices, self.pool_shape, method="bilinear"))
+#
+#         # Pack pooled features into one tensor
+#         pooled = tf.concat(pooled, axis=0)  # [batch * num_boxes, pool_height, pool_width, channels]
+#
+#         # Pack box_to_level mapping into one array and add another
+#         # column representing the order of pooled boxes
+#         # box_to_level: list of shape [batch, num_boxes, 1] for every pyramid level
+#         box_to_level = tf.concat(box_to_level, axis=0)  # [4, batch, num_boxes, 1]
+#         box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
+#         box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)  # [4, batch, num_boxes, 2]
+#
+#         # Rearrange pooled features to match the order of the original boxes
+#         # Sort box_to_level by batch then box index
+#         # TF doesn't have a way to sort by two columns, so merge them and sort.
+#         sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
+#         ix = tf.nn.top_k(sorting_tensor, k=tf.shape(
+#             box_to_level)[0]).indices[::-1]
+#         ix = tf.gather(box_to_level[:, 2], ix)
+#         pooled = tf.gather(pooled, ix)
+#
+#         # Re-add the batch dimension
+#         shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
+#         pooled = tf.reshape(pooled, shape)  # [batch, num_boxes, 7, 7, 256]]
+#         return pooled
+#
+#     def compute_output_shape(self, input_shape):
+#         return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1],)
+#         # [batch_size, num_bboxes, pool_shape(7), pool_shape(7), FPN_channels(256)]
 
 
 ############################################################
@@ -480,8 +480,95 @@ def build_transformer_layer(depth):
     return KM.Model([input_feature_map], [transformed_feature_map], name="s_transformer_layer")
 
 
-def rpn_mimic_loss_graph(student_pooled, teacher_pooled):
-    return tf.reduce_mean(tf.square(student_pooled - teacher_pooled)) / 2.0
+# def rpn_mimic_loss_graph(student_pooled, teacher_pooled):
+#     return tf.reduce_mean(tf.square(student_pooled - teacher_pooled)) / 2.0
+
+def rpn_mimic_loss_graph(config, Q2, Q3, Q4, Q5, P2, P3, P4, P5, boxes, image_meta):
+    student_maps = [Q2, Q3, Q4, Q5]
+    teacher_maps = [P2, P3, P4, P5]
+    # Assign each ROI to a level in the pyramid based on the ROI area.
+    y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
+    h = y2 - y1
+    w = x2 - x1
+    # Use shape of first image. Images in a batch must have the same size.
+    image_shape = modellib.parse_image_meta_graph(image_meta)['image_shape'][0]
+    # Equation 1 in the Feature Pyramid Networks paper. Account for
+    # the fact that our coordinates are normalized here.
+    # e.g. a 224x224 ROI (in pixels) maps to P4
+    image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
+    roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
+    roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
+    roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
+
+
+
+
+
+
+def rpn_mimic_loss_graph(config, Q2, Q3, Q4, Q5, P2, P3, P4, P5, boxes, image_meta):
+    student_maps = [Q2, Q3, Q4, Q5]
+    teacher_maps = [P2, P3, P4, P5]
+    num_boxes = config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE
+    # Assign each ROI to a level in the pyramid based on the ROI area.
+    y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
+    h = y2 - y1
+    w = x2 - x1
+    # Use shape of first image. Images in a batch must have the same size.
+    image_shape = modellib.parse_image_meta_graph(image_meta)['image_shape'][0]
+    # Equation 1 in the Feature Pyramid Networks paper. Account for
+    # the fact that our coordinates are normalized here.
+    # e.g. a 224x224 ROI (in pixels) maps to P4
+    image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
+    roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
+    roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
+    roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
+    loss = tf.constant(0.)
+
+    for i, level in enumerate(range(2, 6)):
+        ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
+        level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
+        P = num_boxes - tf.shape(level_boxes)[0]
+        level_boxes = tf.pad(level_boxes, [(0, P), (0, 0)])  # padded with zero
+        box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
+        box_indices = tf.pad(box_indices, [(0, P)])  # padded with zero
+        level_y1, level_x1, level_y2, level_x2 = tf.split(level_boxes, 4, axis=-1)
+        map_h = image_shape[0] / config.BACKBONE_STRIDES[i]
+        map_w = image_shape[1] / config.BACKBONE_STRIDES[i]
+
+        # calculates the coordinate of bounding boxes at the pyramid level
+        level_y1_coord = tf.cast(tf.floor(level_y1 * map_h), tf.int32)
+        level_x1_coord = tf.cast(tf.floor(level_x1 * map_w), tf.int32)
+        level_y2_coord = tf.cast(tf.ceil(level_y2 * map_h), tf.int32)
+        level_x2_coord = tf.cast(tf.ceil(level_x2 * map_w), tf.int32)
+        level_y1_coord = tf.maximum(tf.squeeze(level_y1_coord, axis=-1), 0)
+        level_x1_coord = tf.maximum(tf.squeeze(level_x1_coord, axis=-1), 0)
+        level_y2_coord = tf.minimum(tf.squeeze(level_y2_coord, axis=-1), tf.cast(map_h, tf.int32))
+        level_x2_coord = tf.minimum(tf.squeeze(level_x2_coord, axis=-1), tf.cast(map_w, tf.int32))
+        level_height = level_y2_coord - level_y1_coord
+        level_width = level_x2_coord - level_x1_coord
+
+        # iterate over bounding boxes and accumulate the l2-distance loss
+        def cond(idx, _):
+            # return tf.less(idx, level_boxes.shape[0])
+            return tf.less(idx, config.TRAIN_ROIS_PER_IMAGE)
+
+        def body(idx, loss):
+            s_cropped = tf.image.crop_to_bounding_box((student_maps[i])[box_indices[idx]],
+                                                      level_y1_coord[idx], level_x1_coord[idx],
+                                                      level_height[idx], level_width[idx])
+            t_cropped = tf.image.crop_to_bounding_box((teacher_maps[i])[box_indices[idx]],
+                                                      level_y1_coord[idx], level_x1_coord[idx],
+                                                      level_height[idx], level_width[idx])
+            loss += tf.reduce_mean(tf.square(s_cropped - t_cropped))
+            idx = tf.add(idx, 1)
+            return [idx, loss]
+
+        loss_temp = tf.while_loop(cond, body, [tf.constant(0), loss])
+        loss += loss_temp[1]
+
+    loss = loss / (2.0 * num_boxes)
+
+    return loss
 
 
 def rpn_mimic_loss_graph(student_maps, teacher_maps, boxes, image_meta):
@@ -761,19 +848,34 @@ class MimicMaskRCNN(modellib.MaskRCNN):
         transformer = build_transformer_layer(config.TOP_DOWN_PYRAMID_SIZE)
         s_transformed_maps = [transformer([p]) for p in s_mrcnn_feature_maps]
 
+<<<<<<< HEAD
+        # # rois: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
+        # s_pooled = s_PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
+        #                              name="s_roi_align")([s_rpn_rois, input_image_meta] + s_transformed_maps)
+        # pooled = modellib.PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
+        #                                   name="roi_align")([s_rpn_rois, input_image_meta] + mrcnn_feature_maps)
+=======
         # rois: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
         s_pooled = s_PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
                                      name="s_roi_align")([s_rpn_rois, input_image_meta] + s_transformed_maps)
         pooled = modellib.PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
                                           name="roi_align")([s_rpn_rois, input_image_meta] + mrcnn_feature_maps)
+>>>>>>> my/master
 
         # Losses
         rpn_class_loss = KL.Lambda(lambda x: modellib.rpn_class_loss_graph(*x), name="rpn_class_loss")(
             [input_rpn_match, s_rpn_class_logits])
         rpn_bbox_loss = KL.Lambda(lambda x: modellib.rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
             [input_rpn_bbox, input_rpn_match, s_rpn_bbox])
-        rpn_mimic_loss = KL.Lambda(lambda x: rpn_mimic_loss_graph(*x), name="rpn_mimic_loss")(
-            [s_pooled, pooled])
+        # rpn_mimic_loss = KL.Lambda(lambda x: rpn_mimic_loss_graph(*x), name="rpn_mimic_loss")(
+        #     [s_pooled, pooled])
+        # rpn_mimic_loss = KL.Lambda(lambda x: rpn_mimic_loss_graph(config, *x), name="rpn_mimic_loss")(
+        #     [s_transformed_maps, mrcnn_feature_maps, s_rpn_rois, input_image_meta])
+        rpn_mimic_loss = KL.Lambda(lambda x: rpn_mimic_loss_graph(config, *x), name="rpn_mimic_loss")(
+            [s_transformed_maps[0], s_transformed_maps[1], s_transformed_maps[2], s_transformed_maps[3],
+             mrcnn_feature_maps[0], mrcnn_feature_maps[1], mrcnn_feature_maps[2], mrcnn_feature_maps[3],
+             s_rpn_rois,
+             input_image_meta])
 
         # Model
         inputs = [input_image, input_image_meta, input_rpn_match, input_rpn_bbox]
