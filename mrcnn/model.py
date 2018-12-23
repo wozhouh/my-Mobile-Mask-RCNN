@@ -877,7 +877,7 @@ class PyramidROIAlign(KE.Layer):
         feature_maps = inputs[2:]
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
-        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
+        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, 1]
         h = y2 - y1
         w = x2 - x1
         # Use shape of first image. Images in a batch must have the same size.
@@ -887,14 +887,14 @@ class PyramidROIAlign(KE.Layer):
         # e.g. a 224x224 ROI (in pixels) maps to P4
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-        roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
-        roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
+        roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4 + log2(roi_h * roi_w)
+        roi_level = tf.squeeze(roi_level, 2)  # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE]
 
         # Loop through levels and apply ROI pooling to each. P2 to P5.
         pooled = []
         box_to_level = []
         for i, level in enumerate(range(2, 6)):
-            ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
+            ix = tf.where(tf.equal(roi_level, level))   # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE]
             level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
 
             # Box indices for crop_and_resize (specify which image the bbox refers to)
@@ -915,19 +915,21 @@ class PyramidROIAlign(KE.Layer):
             #
             # Here we use the simplified approach of a single value per bin,
             # which is how it's done in tf.crop_and_resize()
-            # Result: [batch * num_boxes, pool_height, pool_width, channels]
+            # Result: [BATCH_SIZE * TRAIN_ROIS_PER_IMAGE, POOL_SIZE, POOL_SIZE, TOP_DOWN_PYRAMID_SIZE]
             pooled.append(tf.image.crop_and_resize(
                 feature_maps[i], level_boxes, box_indices, self.pool_shape, method="bilinear"))
 
         # Pack pooled features into one tensor
-        pooled = tf.concat(pooled, axis=0)  # [batch * num_boxes, pool_height, pool_width, channels]
+        pooled = tf.concat(pooled, axis=0)
+        # [BATCH_SIZE * TRAIN_ROIS_PER_IMAGE, POOL_SIZE, POOL_SIZE, TOP_DOWN_PYRAMID_SIZE]
 
         # Pack box_to_level mapping into one array and add another
         # column representing the order of pooled boxes
-        # box_to_level: list of shape [batch, num_boxes, 1] for every pyramid level
-        box_to_level = tf.concat(box_to_level, axis=0)  # [4, batch, num_boxes, 1]
+        # box_to_level: list of shape [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, 1] for every pyramid level
+        box_to_level = tf.concat(box_to_level, axis=0)  # [4, BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, 1]
         box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
-        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)  # [4, batch, num_boxes, 2]
+        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)
+        # [4, BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, 2]
 
         # Rearrange pooled features to match the order of the original boxes
         # Sort box_to_level by batch then box index
@@ -940,12 +942,12 @@ class PyramidROIAlign(KE.Layer):
 
         # Re-add the batch dimension
         shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
-        pooled = tf.reshape(pooled, shape)  # [batch, num_boxes, 7, 7, 256]]
+        pooled = tf.reshape(pooled, shape)
         return pooled
 
     def compute_output_shape(self, input_shape):
         return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1],)
-        # [batch_size, num_bboxes, pool_shape(7), pool_shape(7), FPN_channels(256)]
+        # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, POOL_SIZE, POOL_SIZE, TOP_DOWN_PYRAMID_SIZE]
 
 
 # wozhouh: add position-sensitive ROI-Align, which refers to the PyramidROIAlign layer above
@@ -979,7 +981,7 @@ class PyramidPSROIAlign(KE.Layer):
 
     def call(self, inputs):
         # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
-        boxes = inputs[0]  # [batch, num_boxes, 4]
+        boxes = inputs[0]  # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, 4]
 
         # Image meta
         # Holds details about the image. See compose_image_meta()
@@ -990,7 +992,7 @@ class PyramidPSROIAlign(KE.Layer):
         psroi_score_maps = inputs[2:]
 
         # Assign each ROI to a level in the pyramid based on the ROI area.
-        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
+        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, 1]
         h = y2 - y1
         w = x2 - x1
         # Use shape of first image. Images in a batch must have the same size.
@@ -1001,7 +1003,7 @@ class PyramidPSROIAlign(KE.Layer):
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
         roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4 + log2(roi_h * roi_w)
-        roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
+        roi_level = tf.squeeze(roi_level, 2)  # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE]
 
         # Loop through levels and apply ROI pooling to each. P2 to P5.
         pooled = []
@@ -1034,7 +1036,7 @@ class PyramidPSROIAlign(KE.Layer):
             level_h_bin = (level_y2 - level_y1) / self.pool_shape[0]  # [num_boxes_level, 1]
             level_w_bin = (level_x2 - level_x1) / self.pool_shape[1]  # [num_boxes_level, 1]
             psroi_score_map_bins = tf.split(psroi_score_maps[i], self.roi_bin_num, axis=-1)
-            # list of feature maps: [batch, feature_map_h, feature_map_w, channels(10)] x roi_bin_num(7x7)
+            # list of feature maps: [BATCH_SIZE, feature_map_h, feature_map_w, channels(10)] x roi_bin_num(7x7)
 
             # iterate over each bin of a RoI
             # iterate over height
@@ -1061,14 +1063,15 @@ class PyramidPSROIAlign(KE.Layer):
             pooled.append(
                 tf.transpose(pooled_bin_reshape, [0, 2, 3, 1]))  # [num_boxes_level, pool_height, pool_width, channels]
 
-        # Pack pooled features into one tensor (accumulation of 'num_boxes_level' equals 'batch * num_boxes')
-        pooled = tf.concat(pooled, axis=0)  # [batch * num_boxes, pool_height, pool_width, channels]
+        # Pack pooled features into one tensor
+        # Note that accumulation of 'num_boxes_level' equals 'BATCH_SIZE * TRAIN_ROIS_PER_IMAGE'
+        pooled = tf.concat(pooled, axis=0)  # [BATCH_SIZE * TRAIN_ROIS_PER_IMAGE, POOL_SIZE, POOL_SIZE, channels]
 
         # Pack box_to_level mapping into one array and add another
         # column representing the order of pooled boxes
-        # box_to_level: list of shape [batch, num_boxes, 1] for every pyramid level Px
-        box_to_level = tf.concat(box_to_level, axis=0)  # [P * batch, num_boxes]
-        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)  # index: [P * batch, 1]
+        # box_to_level: list of shape [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, 1] for every pyramid level Px
+        box_to_level = tf.concat(box_to_level, axis=0)  # [P * BATCH_SIZE, TRAIN_ROIS_PER_IMAGE]
+        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)  # index: [P * BATCH_SIZE, 1]
         box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)
 
         # Rearrange pooled features to match the order of the original boxes
@@ -1081,12 +1084,12 @@ class PyramidPSROIAlign(KE.Layer):
 
         # Re-add the batch dimension
         shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
-        pooled = tf.reshape(pooled, shape)  # [batch, num_boxes, 7, 7, 256]]
+        pooled = tf.reshape(pooled, shape)
         return pooled
 
     def compute_output_shape(self, input_shape):
         return input_shape[0][:2] + self.pool_shape + (self.output_channels,)
-        # [batch, num_boxes, pool_shape, pool_shape, channels]
+        # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, POOL_SIZE, POOL_SIZE, TOP_DOWN_PYRAMID_SIZE]
 
 
 ############################################################
@@ -1464,7 +1467,7 @@ class DetectionLayer(KE.Layer):
             [self.config.BATCH_SIZE, self.config.DETECTION_MAX_INSTANCES, 6])
 
     def compute_output_shape(self, input_shape):
-        return (None, self.config.DETECTION_MAX_INSTANCES, 6)
+        return None, self.config.DETECTION_MAX_INSTANCES, 6
 
 
 ############################################################
@@ -1593,36 +1596,36 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
 
     # rois: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
     x = PyramidROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + feature_maps)
-    # output: batch x num_boxes x config.POOL_SIZE(7) x config.POOL_SIZE(7) x config.TOP_DOWN_PYRAMID_SIZE(256)
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x POOL_SIZE x POOL_SIZE x TOP_DOWN_PYRAMID_SIZE
 
     # Two 1024 FC layers (implemented with Conv2D for consistency)
     x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"),
                            name="mrcnn_class_conv1")(x)
     x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # output: batch x num_boxes x 1 x 1 x 1024
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x 1 x 1 x FPN_CLASSIF_FC_LAYERS_SIZE
 
     x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (1, 1)), name="mrcnn_class_conv2")(x)
     x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn2')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # output: batch x num_boxes x 1 x 1 x 1024
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x 1 x 1 x FPN_CLASSIF_FC_LAYERS_SIZE
 
     shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2), name="pool_squeeze")(x)
-    # output: batch x num_boxes x 1024
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x 1024
 
     # Debug: change the layer name to test for light-head
     # Classifier head
     mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes), name='mrcnn_class_logits')(shared)
     mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"), name="mrcnn_class")(mrcnn_class_logits)
-    # output: batch x num_boxes x 81
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x NUM_CLASSES
 
     # BBox head
-    # [batch, num_rois, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
+    # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
     x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'), name='mrcnn_bbox_fc')(shared)
-    # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
+    # Reshape to [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
     s = K.int_shape(x)
     mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
-    # output: batch x num_boxes x 81 x 4
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x 81 x 4
 
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
 
@@ -1654,26 +1657,26 @@ def light_head_classifier_graph(rois, feature_maps, image_meta,
 
     shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2),
                        name="pool_squeeze")(x)
-    # output: batch x num_boxes x 1024
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x FPN_CLASSIF_FC_LAYERS_SIZE
 
     # Debug: change the layer name to test for light-head
     # Classifier head
     light_head_class_logits = KL.TimeDistributed(KL.Dense(num_classes), name="light_head_class_logits")(shared)
     light_head_probs = KL.TimeDistributed(KL.Activation("softmax"), name="light_head_class")(light_head_class_logits)
-    # output: batch x num_boxes x 81
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x NUM_CLASSES
 
     # BBox head
     # [batch, num_rois, NUM_CLASSES * (dy, dx, log(dh), log(dw))]
     x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'), name="light_head_bbox_fc")(shared)
-    # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
+    # Reshape to [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
     s = K.int_shape(x)
     light_head_bbox = KL.Reshape((s[1], num_classes, 4), name="light_head_bbox")(x)
-    # output: batch x num_boxes x 81 x 4
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x NUM_CLASSES x 4
 
     return light_head_class_logits, light_head_probs, light_head_bbox
 
 
-# wozhouh: add support for depth-wise and point-wise convolution at the mask-head of Mask-RCNN
+# wozhouh: add support for depth-wise and point-wise convolution at the mask-head of Mask R-CNN
 def _timedistributed_separable_conv_block(inputs, pointwise_conv_filters, strides=(1, 1), block_id=1, train_bn=False):
     """Similiar to the _depthwise_conv_block used in the Backbone,
     but with each layer wrapped in a TimeDistributed layer,
@@ -1724,10 +1727,10 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
     Returns: Masks [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, NUM_CLASSES]
     """
     # ROI Pooling
-    # Shape: [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, channels]
+    # Shape: [batch, num_rois, MASK_POOL_SIZE, MASK_POOL_SIZE, TOP_DOWN_PYRAMID_SIZE]
 
     x = PyramidROIAlign([pool_size, pool_size], name="roi_align_mask")([rois, image_meta] + feature_maps)
-    # output: batch x num_boxes x config.MASK_POOL_SIZE x config.MASK_POOL_SIZE x config.TOP_DOWN_PYRAMID_SIZE
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x MASK_POOL_SIZE x MASK_POOL_SIZE x TOP_DOWN_PYRAMID_SIZE
 
     # Conv layers
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv1")(x)
@@ -1745,13 +1748,13 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta,
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv4")(x)
     x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn4')(x, training=train_bn)
     x = KL.Activation('relu')(x)
-    # output: batch x num_boxes x 14 x 14 x 256
+    # output: BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x MASK_POOL_SIZE x MASK_POOL_SIZE x TOP_DOWN_PYRAMID_SIZE
 
     x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"), name="mrcnn_mask_deconv")(x)
-    # output: batch x num_boxes x 28 x 28 x 256
+    # output:BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x 2*MASK_POOL_SIZE x 2*MASK_POOL_SIZE x TOP_DOWN_PYRAMID_SIZE
 
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"), name="mrcnn_mask")(x)
-    # output: batch x num_boxes x 28 x 28 x 81
+    # output: batch x num_boxes x 2*MASK_POOL_SIZE x 2*MASK_POOL_SIZE x NUM_CLASSES
 
     return x
 
@@ -1765,13 +1768,13 @@ def build_mobile_mask_graph(rois, feature_maps, image_meta,
     x = _timedistributed_separable_conv_block(x, 256, block_id=2, train_bn=train_bn)
     x = _timedistributed_separable_conv_block(x, 256, block_id=3, train_bn=train_bn)
     x = _timedistributed_separable_conv_block(x, 256, block_id=4, train_bn=train_bn)
-    # output: batch x num_boxes x config.MASK_POOL_SIZE x config.MASK_POOL_SIZE x config.TOP_DOWN_PYRAMID_SIZE
+    # output:BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x MASK_POOL_SIZE x MASK_POOL_SIZE x TOP_DOWN_PYRAMID_SIZE
 
     x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"), name="mrcnn_mask_deconv")(x)
-    # output: batch x num_boxes x 28 x 28 x 256
+    # output:BATCH_SIZE x TRAIN_ROIS_PER_IMAGE x 2*MASK_POOL_SIZE x 2*MASK_POOL_SIZE x TOP_DOWN_PYRAMID_SIZE
 
     x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"), name="mrcnn_mask")(x)
-    # output: batch x num_boxes x 28 x 28 x 81
+    # output: batch x num_boxes x 2*MASK_POOL_SIZE x 2*MASK_POOL_SIZE x NUM_CLASSES
 
     return x
 

@@ -1,18 +1,17 @@
 """
-Training mimic Mask R-CNN
-The main Mask R-CNN model implementation.
+Mimic Training of Mask R-CNN
 
 Written by wozhouh
 """
 
 import numpy as np
 import os
-import logging
 import multiprocessing
 
 # Import Deep learning framework
 import tensorflow as tf
 import keras
+import keras.backend as K
 import keras.engine as KE
 import keras.layers as KL
 import keras.models as KM
@@ -27,17 +26,21 @@ from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 
+'''
+The following is some modules directly copied from model.py and only different with the layer names 
+as the student model has to be distinguished from the teacher model by name
+'''
+
 
 ############################################################
 #  ResNet Graph for student network
 ############################################################
 
-# build the ResNet-50/101 based backbone
 # Code adopted from:
 # https://github.com/fchollet/deep-learning-models/blob/master/resnet50.py
 
 def s_identity_block(input_tensor, kernel_size, filters, stage, block, prefix='s_',
-                     use_bias=True, train_bn=False):
+                     use_bias=True, train_bn=None):
     """The identity_block is the block that has no conv layer at shortcut
     # Arguments
         input_tensor: input tensor
@@ -73,7 +76,7 @@ def s_identity_block(input_tensor, kernel_size, filters, stage, block, prefix='s
 
 
 def s_conv_block(input_tensor, kernel_size, filters, stage, block, prefix='s_',
-                 strides=(2, 2), use_bias=True, train_bn=False):
+                 strides=(2, 2), use_bias=True, train_bn=None):
     """conv_block is the block that has a conv layer at shortcut
     # Arguments
         input_tensor: input tensor
@@ -115,7 +118,7 @@ def s_conv_block(input_tensor, kernel_size, filters, stage, block, prefix='s_',
 
 
 def s_resnet_graph(input_image, architecture, prefix='s_', train_bn=None):
-    """Build a ResNet graph.
+    """Build a ResNet-50/101 graph.
         input_image: input to feed the ResNet graph
         architecture: Can be resnet50 or resnet101
         prefix: layer name prefix to distinguish teacher and student network
@@ -357,122 +360,11 @@ class s_ProposalLayer(KE.Layer):
         return (None, self.proposal_count, 4)
 
 
-# ############################################################
-# #  ROIAlign Layer for student network
-# ############################################################
-#
-# class s_PyramidROIAlign(KE.Layer):
-#     """Implements ROI Align on multiple levels of the feature pyramid.
-#
-#     Params:
-#     - pool_shape: [pool_height, pool_width] of the output pooled regions. Usually [7, 7]
-#
-#     Inputs:
-#     - boxes: [batch, num_boxes, (y1, x1, y2, x2)] in normalized
-#              coordinates. Possibly padded with zeros if not enough
-#              boxes to fill the array.
-#     - image_meta: [batch, (meta data)] Image details. See compose_image_meta()
-#     - feature_maps: List of feature maps from different levels of the pyramid.
-#                     Each is [batch, height, width, channels]
-#
-#     Output:
-#     Pooled regions in the shape: [batch, num_boxes, pool_height, pool_width, channels].
-#     The width and height are those specific in the pool_shape in the layer
-#     constructor.
-#     """
-#
-#     def __init__(self, pool_shape, **kwargs):
-#         super(s_PyramidROIAlign, self).__init__(**kwargs)
-#         self.pool_shape = tuple(pool_shape)
-#
-#     def call(self, inputs):
-#         # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
-#         boxes = inputs[0]
-#
-#         # Image meta
-#         # Holds details about the image. See compose_image_meta()
-#         image_meta = inputs[1]
-#
-#         # Feature Maps. List of feature maps from different levels of the
-#         # feature pyramid. Each is [batch, height, width, channels]
-#         feature_maps = inputs[2:]
-#
-#         # Assign each ROI to a level in the pyramid based on the ROI area.
-#         y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
-#         h = y2 - y1
-#         w = x2 - x1
-#         # Use shape of first image. Images in a batch must have the same size.
-#         image_shape = modellib.parse_image_meta_graph(image_meta)['image_shape'][0]
-#         # Equation 1 in the Feature Pyramid Networks paper. Account for
-#         # the fact that our coordinates are normalized here.
-#         # e.g. a 224x224 ROI (in pixels) maps to P4
-#         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
-#         roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-#         roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
-#         roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
-#
-#         # Loop through levels and apply ROI pooling to each. P2 to P5.
-#         pooled = []
-#         box_to_level = []
-#         for i, level in enumerate(range(2, 6)):
-#             ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
-#             level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
-#
-#             # Box indices for crop_and_resize (specify which image the bbox refers to)
-#             box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
-#
-#             # Keep track of which box is mapped to which level
-#             box_to_level.append(ix)
-#
-#             # Stop gradient propagation to ROI proposals
-#             level_boxes = tf.stop_gradient(level_boxes)
-#             box_indices = tf.stop_gradient(box_indices)
-#
-#             # Crop and Resize
-#             # From Mask R-CNN paper: "We sample four regular locations, so
-#             # that we can evaluate either max or average pooling. In fact,
-#             # interpolating only a single value at each bin center (without
-#             # pooling) is nearly as effective."
-#             #
-#             # Here we use the simplified approach of a single value per bin,
-#             # which is how it's done in tf.crop_and_resize()
-#             # Result: [batch * num_boxes, pool_height, pool_width, channels]
-#             pooled.append(tf.image.crop_and_resize(
-#                 feature_maps[i], level_boxes, box_indices, self.pool_shape, method="bilinear"))
-#
-#         # Pack pooled features into one tensor
-#         pooled = tf.concat(pooled, axis=0)  # [batch * num_boxes, pool_height, pool_width, channels]
-#
-#         # Pack box_to_level mapping into one array and add another
-#         # column representing the order of pooled boxes
-#         # box_to_level: list of shape [batch, num_boxes, 1] for every pyramid level
-#         box_to_level = tf.concat(box_to_level, axis=0)  # [4, batch, num_boxes, 1]
-#         box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
-#         box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)  # [4, batch, num_boxes, 2]
-#
-#         # Rearrange pooled features to match the order of the original boxes
-#         # Sort box_to_level by batch then box index
-#         # TF doesn't have a way to sort by two columns, so merge them and sort.
-#         sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
-#         ix = tf.nn.top_k(sorting_tensor, k=tf.shape(
-#             box_to_level)[0]).indices[::-1]
-#         ix = tf.gather(box_to_level[:, 2], ix)
-#         pooled = tf.gather(pooled, ix)
-#
-#         # Re-add the batch dimension
-#         shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
-#         pooled = tf.reshape(pooled, shape)  # [batch, num_boxes, 7, 7, 256]]
-#         return pooled
-#
-#     def compute_output_shape(self, input_shape):
-#         return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1],)
-#         # [batch_size, num_bboxes, pool_shape(7), pool_shape(7), FPN_channels(256)]
-
-
 ############################################################
-#  Loss Functions
+#  Add Mimic Loss Functions
 ############################################################
 
+# A convolution layer for transformation of feature maps from student model before calculating mimicking loss
 def build_transformer_layer(depth):
     input_feature_map = KL.Input(shape=[None, None, depth], name="s_transformer_input")
     transformed_feature_map = KL.Conv2D(depth, (3, 3), padding='same', strides=(1, 1), activation='linear',
@@ -480,14 +372,14 @@ def build_transformer_layer(depth):
     return KM.Model([input_feature_map], [transformed_feature_map], name="s_transformer_layer")
 
 
-# def rpn_mimic_loss_graph(student_pooled, teacher_pooled):
-#     return tf.reduce_mean(tf.square(student_pooled - teacher_pooled)) / 2.0
-
+# mimic loss that accumulated by l2-distance of two lists of feature maps at the RPN proposals
 def rpn_mimic_loss_graph(config, Q2, Q3, Q4, Q5, P2, P3, P4, P5, boxes, image_meta):
     student_maps = [Q2, Q3, Q4, Q5]
     teacher_maps = [P2, P3, P4, P5]
+    num_boxes_batch = config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE
+
     # Assign each ROI to a level in the pyramid based on the ROI area.
-    y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
+    y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE, 1]
     h = y2 - y1
     w = x2 - x1
     # Use shape of first image. Images in a batch must have the same size.
@@ -497,228 +389,55 @@ def rpn_mimic_loss_graph(config, Q2, Q3, Q4, Q5, P2, P3, P4, P5, boxes, image_me
     # e.g. a 224x224 ROI (in pixels) maps to P4
     image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
     roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-    roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
-    roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
+    roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4 + log2(roi_h * roi_w)
+    roi_level = tf.squeeze(roi_level, 2)  # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE]
 
-
-
-
-
-
-def rpn_mimic_loss_graph(config, Q2, Q3, Q4, Q5, P2, P3, P4, P5, boxes, image_meta):
-    student_maps = [Q2, Q3, Q4, Q5]
-    teacher_maps = [P2, P3, P4, P5]
-    num_boxes = config.BATCH_SIZE * config.TRAIN_ROIS_PER_IMAGE
-    # Assign each ROI to a level in the pyramid based on the ROI area.
-    y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
-    h = y2 - y1
-    w = x2 - x1
-    # Use shape of first image. Images in a batch must have the same size.
-    image_shape = modellib.parse_image_meta_graph(image_meta)['image_shape'][0]
-    # Equation 1 in the Feature Pyramid Networks paper. Account for
-    # the fact that our coordinates are normalized here.
-    # e.g. a 224x224 ROI (in pixels) maps to P4
-    image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
-    roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-    roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
-    roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
-    loss = tf.constant(0.)
+    # init the loss for later accumulation of every pyramid level
+    loss = 0.
 
     for i, level in enumerate(range(2, 6)):
-        ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
+        ix = tf.where(tf.equal(roi_level, level))  # [BATCH_SIZE, TRAIN_ROIS_PER_IMAGE]
         level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
-        P = num_boxes - tf.shape(level_boxes)[0]
-        level_boxes = tf.pad(level_boxes, [(0, P), (0, 0)])  # padded with zero
+
+        # Box indices for crop_and_resize (specify which image the bbox refers to)
         box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
+
+        P = num_boxes_batch - tf.shape(level_boxes)[0]
+        level_boxes = tf.pad(level_boxes, [(0, P), (0, 0)])  # padded with zero
         box_indices = tf.pad(box_indices, [(0, P)])  # padded with zero
+
         level_y1, level_x1, level_y2, level_x2 = tf.split(level_boxes, 4, axis=-1)
         map_h = image_shape[0] / config.BACKBONE_STRIDES[i]
         map_w = image_shape[1] / config.BACKBONE_STRIDES[i]
 
         # calculates the coordinate of bounding boxes at the pyramid level
-        level_y1_coord = tf.cast(tf.floor(level_y1 * map_h), tf.int32)
-        level_x1_coord = tf.cast(tf.floor(level_x1 * map_w), tf.int32)
-        level_y2_coord = tf.cast(tf.ceil(level_y2 * map_h), tf.int32)
-        level_x2_coord = tf.cast(tf.ceil(level_x2 * map_w), tf.int32)
-        level_y1_coord = tf.maximum(tf.squeeze(level_y1_coord, axis=-1), 0)
-        level_x1_coord = tf.maximum(tf.squeeze(level_x1_coord, axis=-1), 0)
-        level_y2_coord = tf.minimum(tf.squeeze(level_y2_coord, axis=-1), tf.cast(map_h, tf.int32))
-        level_x2_coord = tf.minimum(tf.squeeze(level_x2_coord, axis=-1), tf.cast(map_w, tf.int32))
-        level_height = level_y2_coord - level_y1_coord
-        level_width = level_x2_coord - level_x1_coord
+        level_y1_p = tf.cast(tf.squeeze(tf.floor(level_y1 * map_h), axis=-1), tf.int32)  # [num_boxes_batch]
+        level_x1_p = tf.cast(tf.squeeze(tf.floor(level_x1 * map_w), axis=-1), tf.int32)
+        level_y2_p = tf.cast(tf.squeeze(tf.ceil(level_y2 * map_h), axis=-1), tf.int32)
+        level_x2_p = tf.cast(tf.squeeze(tf.ceil(level_x2 * map_w), axis=-1), tf.int32)
+        level_h_p = level_y2_p - level_y1_p
+        level_w_p = level_x2_p - level_x1_p
 
         # iterate over bounding boxes and accumulate the l2-distance loss
         def cond(idx, _):
             # return tf.less(idx, level_boxes.shape[0])
-            return tf.less(idx, config.TRAIN_ROIS_PER_IMAGE)
+            return tf.less(idx, num_boxes_batch)
 
         def body(idx, loss):
-            s_cropped = tf.image.crop_to_bounding_box((student_maps[i])[box_indices[idx]],
-                                                      level_y1_coord[idx], level_x1_coord[idx],
-                                                      level_height[idx], level_width[idx])
-            t_cropped = tf.image.crop_to_bounding_box((teacher_maps[i])[box_indices[idx]],
-                                                      level_y1_coord[idx], level_x1_coord[idx],
-                                                      level_height[idx], level_width[idx])
+            s_cropped = tf.slice(student_maps[i], [box_indices[idx], level_y1_p[idx], level_x1_p[idx], 0],
+                                 [1, level_h_p[idx], level_w_p[idx], -1])
+            t_cropped = tf.slice(teacher_maps[i], [box_indices[idx], level_y1_p[idx], level_x1_p[idx], 0],
+                                 [1, level_h_p[idx], level_w_p[idx], -1])
             loss += tf.reduce_mean(tf.square(s_cropped - t_cropped))
             idx = tf.add(idx, 1)
             return [idx, loss]
 
-        loss_temp = tf.while_loop(cond, body, [tf.constant(0), loss])
+        loss_temp = tf.while_loop(cond, body, [0, 0.])
         loss += loss_temp[1]
 
-    loss = loss / (2.0 * num_boxes)
+    loss = loss / (2.0 * num_boxes_batch)
 
     return loss
-
-
-def rpn_mimic_loss_graph(student_maps, teacher_maps, boxes, image_meta):
-    # Assign each ROI to a level in the pyramid based on the ROI area.
-    y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)  # [batch, num_boxes, 1]
-    h = y2 - y1
-    w = x2 - x1
-    # Use shape of first image. Images in a batch must have the same size.
-    image_shape = modellib.parse_image_meta_graph(image_meta)['image_shape'][0]
-    # Equation 1 in the Feature Pyramid Networks paper. Account for
-    # the fact that our coordinates are normalized here.
-    # e.g. a 224x224 ROI (in pixels) maps to P4
-    image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
-    roi_level = modellib.log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-    roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))  # 4+log2(roi_h * roi_w)
-    roi_level = tf.squeeze(roi_level, 2)  # [batch, num_boxes]
-
-    for i, level in enumerate(range(2, 6)):
-        ix = tf.where(tf.equal(roi_level, level))  # [batch, num_boxes]
-        level_boxes = tf.gather_nd(boxes, ix)  # [num_boxes_level, 4]
-        box_indices = tf.cast(ix[:, 0], tf.int32)  # [num_boxes_level]
-
-
-
-    return 0.
-
-
-############################################################
-#  Data
-############################################################
-
-def s_data_generator(dataset, config, shuffle=True, augment=False, augmentation=None,
-                     batch_size=1, no_augmentation_sources=None):
-    """A generator that returns images and corresponding target class ids,
-    bounding box deltas, and masks.
-
-    dataset: The Dataset object to pick data from
-    config: The model config object
-    shuffle: If True, shuffles the samples before every epoch
-    augment: (deprecated. Use augmentation instead). If true, apply random
-        image augmentation. Currently, only horizontal flipping is offered.
-    augmentation: Optional. An imgaug (https://github.com/aleju/imgaug) augmentation.
-        For example, passing imgaug.augmenters.Fliplr(0.5) flips images
-        right/left 50% of the time.
-    random_rois: If > 0 then generate proposals to be used to train the
-                 network classifier and mask heads. Useful if training
-                 the Mask RCNN part without the RPN.
-    batch_size: How many images to return in each call
-    detection_targets: If True, generate detection targets (class IDs, bbox
-        deltas, and masks). Typically for debugging or visualizations because
-        in trainig detection targets are generated by DetectionTargetLayer.
-    no_augmentation_sources: Optional. List of sources to exclude for
-        augmentation. A source is string that identifies a dataset and is
-        defined in the Dataset class.
-
-    Returns a Python generator. Upon calling next() on it, the
-    generator returns two lists, inputs and outputs. The contents
-    of the lists differs depending on the received arguments:
-    inputs list:
-    - images: [batch, H, W, C]
-    - image_meta: [batch, (meta data)] Image details. See compose_image_meta()
-    - rpn_match: [batch, N] Integer (1=positive anchor, -1=negative, 0=neutral)
-    - rpn_bbox: [batch, N, (dy, dx, log(dh), log(dw))] Anchor bbox deltas.
-
-    outputs list: Usually empty in regular training. But if detection_targets
-        is True then the outputs list contains target class_ids, bbox deltas,
-        and masks.
-    """
-    b = 0  # batch item index
-    image_index = -1
-    image_ids = np.copy(dataset.image_ids)
-    error_count = 0
-    no_augmentation_sources = no_augmentation_sources or []
-
-    # Anchors
-    # [anchor_count, (y1, x1, y2, x2)]
-    backbone_shapes = modellib.compute_backbone_shapes(config, config.IMAGE_SHAPE)
-    anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,
-                                             config.RPN_ANCHOR_RATIOS,
-                                             backbone_shapes,
-                                             config.BACKBONE_STRIDES,
-                                             config.RPN_ANCHOR_STRIDE)
-
-    # Keras requires a generator to run indefinitely.
-    while True:
-        try:
-            # Increment index to pick next image. Shuffle if at the start of an epoch.
-            image_index = (image_index + 1) % len(image_ids)
-            if shuffle and image_index == 0:
-                np.random.shuffle(image_ids)
-
-            # Get GT bounding boxes and masks for image.
-            image_id = image_ids[image_index]
-
-            # If the image source is not to be augmented pass None as augmentation
-            if dataset.image_info[image_id]['source'] in no_augmentation_sources:
-                image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
-                    modellib.load_image_gt(dataset, config, image_id, augment=augment,
-                                           augmentation=None,
-                                           use_mini_mask=config.USE_MINI_MASK)
-            else:
-                image, image_meta, gt_class_ids, gt_boxes, gt_masks = \
-                    modellib.load_image_gt(dataset, config, image_id, augment=augment,
-                                           augmentation=augmentation,
-                                           use_mini_mask=config.USE_MINI_MASK)
-
-            # Skip images that have no instances. This can happen in cases
-            # where we train on a subset of classes and the image doesn't
-            # have any of the classes we care about.
-            if not np.any(gt_class_ids > 0):
-                continue
-
-            # RPN Targets
-            rpn_match, rpn_bbox = modellib.build_rpn_targets(image.shape, anchors,
-                                                             gt_class_ids, gt_boxes, config)
-
-            # Init batch arrays
-            if b == 0:
-                batch_image_meta = np.zeros(
-                    (batch_size,) + image_meta.shape, dtype=image_meta.dtype)
-                batch_rpn_match = np.zeros(
-                    [batch_size, anchors.shape[0], 1], dtype=rpn_match.dtype)
-                batch_rpn_bbox = np.zeros(
-                    [batch_size, config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4], dtype=rpn_bbox.dtype)
-                batch_images = np.zeros(
-                    (batch_size,) + image.shape, dtype=np.float32)
-
-            # Add to batch
-            batch_image_meta[b] = image_meta
-            batch_rpn_match[b] = rpn_match[:, np.newaxis]
-            batch_rpn_bbox[b] = rpn_bbox
-            batch_images[b] = modellib.mold_image(image.astype(np.float32), config)
-            b += 1
-
-            # Batch full?
-            if b >= batch_size:
-                inputs = [batch_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox]
-                yield inputs, []
-
-                # start a new batch
-                b = 0
-        except (GeneratorExit, KeyboardInterrupt):
-            raise
-        except:
-            # Log it and skip the image
-            logging.exception("Error processing image {}".format(
-                dataset.image_info[image_id]))
-            error_count += 1
-            if error_count > 5:
-                raise
 
 
 ############################################################
@@ -742,18 +461,57 @@ class MimicMaskRCNN(modellib.MaskRCNN):
     def build(self, mode, config):
         """Build the Mask R-CNN teacher-student architecture for mimic training.
         """
+        assert mode in ['training', 'inference']
+
+        # Image size must be dividable by 2 multiple times
+        h, w = config.IMAGE_SHAPE[:2]
+        if h / 2 ** 6 != int(h / 2 ** 6) or w / 2 ** 6 != int(w / 2 ** 6):
+            raise Exception("Image size must be dividable by 2 at least 6 times "
+                            "to avoid fractions when downscaling and upscaling."
+                            "For example, use 256, 320, 384, 448, 512, ... etc. ")
+
         # Input
         input_image = KL.Input(shape=[None, None, config.IMAGE_SHAPE[2]], name="input_image")
         input_image_meta = KL.Input(shape=[config.IMAGE_META_SIZE], name="input_image_meta")
-        # RPN GT
-        input_rpn_match = KL.Input(shape=[None, 1], name="input_rpn_match", dtype=tf.int32)
-        input_rpn_bbox = KL.Input(shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
 
-        # Teacher Network
+        if mode == "training":
+            # RPN GT
+            input_rpn_match = KL.Input(shape=[None, 1], name="input_rpn_match", dtype=tf.int32)
+            input_rpn_bbox = KL.Input(shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
+
+            # Detection GT (class IDs, bounding boxes, and masks)
+            # 1. GT Class IDs (zero padded)
+            input_gt_class_ids = KL.Input(shape=[None], name="input_gt_class_ids", dtype=tf.int32)
+
+            # 2. GT Boxes in pixels (zero padded)
+            # [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in image coordinates
+            input_gt_boxes = KL.Input(shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
+            # Normalize coordinates
+            gt_boxes = KL.Lambda(lambda x: modellib.norm_boxes_graph(x, K.shape(input_image)[1:3]))(input_gt_boxes)
+
+            # 3. GT Masks (zero padded)
+            # [batch, height, width, MAX_GT_INSTANCES]
+            if config.USE_MINI_MASK:
+                input_gt_masks = KL.Input(
+                    shape=[config.MINI_MASK_SHAPE[0],
+                           config.MINI_MASK_SHAPE[1], None],
+                    name="input_gt_masks", dtype=bool)
+            else:
+                input_gt_masks = KL.Input(
+                    shape=[config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1], None],
+                    name="input_gt_masks", dtype=bool)
+
+            # Class ID mask to mark class IDs supported by the dataset the image came from.
+            active_class_ids = KL.Lambda(
+                lambda x: modellib.parse_image_meta_graph(x)["active_class_ids"]
+            )(input_image_meta)
+
+        elif mode == "inference":
+            pass
+
+        # Build the architecture of the teacher model
         # Backbone
-        _, C2, C3, C4, C5 = modellib.resnet_graph(input_image, config.TEACHER_BACKBONE,
-                                                  stage5=True, train_bn=config.TRAIN_BN)
-
+        _, C2, C3, C4, C5 = modellib.resnet_graph(input_image, config.TEACHER_BACKBONE, stage5=True, train_bn=False)
         # Top-down Layers
         P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name='fpn_c5p5')(C5)
         P4 = KL.Add(name="fpn_p4add")([
@@ -772,13 +530,12 @@ class MimicMaskRCNN(modellib.MaskRCNN):
         P5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p5")(P5)  # N x 32 x 32 x 256
 
         # Note that P6 is used in RPN, but not in the classifier heads.
-        mrcnn_feature_maps = [P2, P3, P4, P5]
+        t_mrcnn_feature_maps = [P2, P3, P4, P5]
 
-        # Student Network
+        # Build the architecture of the student model
         s_prefix = 's_'
         # Backbone
-        _, S2, S3, S4, S5 = s_resnet_graph(input_image, config.STUDENT_BACKBONE,
-                                           prefix=s_prefix, train_bn=None)
+        _, S2, S3, S4, S5 = s_resnet_graph(input_image, config.STUDENT_BACKBONE, prefix=s_prefix, train_bn=None)
         # Top-down Layers
         Q5 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name=s_prefix + 'fpn_s5q5')(S5)
         Q4 = KL.Add(name=s_prefix + "fpn_q4add")([
@@ -843,42 +600,34 @@ class MimicMaskRCNN(modellib.MaskRCNN):
             name="s_ROI",
             config=config)([s_rpn_class, s_rpn_bbox, anchors])
 
-        # ROI-Align and compare the difference on the feature maps of student and teacher model
-        # Add a transformer layer before comparison
-        transformer = build_transformer_layer(config.TOP_DOWN_PYRAMID_SIZE)
-        s_transformed_maps = [transformer([p]) for p in s_mrcnn_feature_maps]
+        # Generate detection targets
+        # Subsamples proposals and generates target outputs for training
+        # Note that proposal class IDs, gt_boxes, and gt_masks are zero
+        # padded. Equally, returned rois and targets are zero padded.
+        s_rois, target_class_ids, target_bbox, target_mask = \
+            modellib.DetectionTargetLayer(config, name="proposal_targets")([
+                s_rpn_rois, input_gt_class_ids, gt_boxes, input_gt_masks])
+        # s_rois: [batch, TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized coordinates
 
-<<<<<<< HEAD
-        # # rois: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
-        # s_pooled = s_PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
-        #                              name="s_roi_align")([s_rpn_rois, input_image_meta] + s_transformed_maps)
-        # pooled = modellib.PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
-        #                                   name="roi_align")([s_rpn_rois, input_image_meta] + mrcnn_feature_maps)
-=======
-        # rois: [batch, num_rois, POOL_SIZE, POOL_SIZE, channels]
-        s_pooled = s_PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
-                                     name="s_roi_align")([s_rpn_rois, input_image_meta] + s_transformed_maps)
-        pooled = modellib.PyramidROIAlign([config.MASK_POOL_SIZE, config.MASK_POOL_SIZE],
-                                          name="roi_align")([s_rpn_rois, input_image_meta] + mrcnn_feature_maps)
->>>>>>> my/master
+        # Add a transformer layer to the feature maps from the student model before comparison with the teacher model
+        transformer = build_transformer_layer(config.TOP_DOWN_PYRAMID_SIZE)
+        s_transformed_feature_maps = [transformer([p]) for p in s_mrcnn_feature_maps]
 
         # Losses
         rpn_class_loss = KL.Lambda(lambda x: modellib.rpn_class_loss_graph(*x), name="rpn_class_loss")(
             [input_rpn_match, s_rpn_class_logits])
         rpn_bbox_loss = KL.Lambda(lambda x: modellib.rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")(
             [input_rpn_bbox, input_rpn_match, s_rpn_bbox])
-        # rpn_mimic_loss = KL.Lambda(lambda x: rpn_mimic_loss_graph(*x), name="rpn_mimic_loss")(
-        #     [s_pooled, pooled])
-        # rpn_mimic_loss = KL.Lambda(lambda x: rpn_mimic_loss_graph(config, *x), name="rpn_mimic_loss")(
-        #     [s_transformed_maps, mrcnn_feature_maps, s_rpn_rois, input_image_meta])
         rpn_mimic_loss = KL.Lambda(lambda x: rpn_mimic_loss_graph(config, *x), name="rpn_mimic_loss")(
-            [s_transformed_maps[0], s_transformed_maps[1], s_transformed_maps[2], s_transformed_maps[3],
-             mrcnn_feature_maps[0], mrcnn_feature_maps[1], mrcnn_feature_maps[2], mrcnn_feature_maps[3],
-             s_rpn_rois,
-             input_image_meta])
+            [s_transformed_feature_maps[0], s_transformed_feature_maps[1],
+             s_transformed_feature_maps[2], s_transformed_feature_maps[3],
+             t_mrcnn_feature_maps[0], t_mrcnn_feature_maps[1],
+             t_mrcnn_feature_maps[2], t_mrcnn_feature_maps[3],
+             s_rois, input_image_meta])
 
         # Model
-        inputs = [input_image, input_image_meta, input_rpn_match, input_rpn_bbox]
+        inputs = [input_image, input_image_meta, input_rpn_match, input_rpn_bbox,
+                  input_gt_class_ids, input_gt_boxes, input_gt_masks]
         outputs = [s_rpn_class_logits, s_rpn_class, s_rpn_bbox,
                    s_rpn_rois, rpn_class_loss, rpn_bbox_loss, rpn_mimic_loss]
         model = KM.Model(inputs, outputs, name='mimic_mask_rcnn')
@@ -947,12 +696,12 @@ class MimicMaskRCNN(modellib.MaskRCNN):
             layers = layer_regex[layers]
 
         # Data generators
-        train_generator = s_data_generator(train_dataset, self.config, shuffle=True,
-                                           augmentation=augmentation,
-                                           batch_size=self.config.BATCH_SIZE,
-                                           no_augmentation_sources=no_augmentation_sources)
-        val_generator = s_data_generator(val_dataset, self.config, shuffle=True,
-                                         batch_size=self.config.BATCH_SIZE)
+        train_generator = modellib.data_generator(train_dataset, self.config, shuffle=True,
+                                                  augmentation=augmentation,
+                                                  batch_size=self.config.BATCH_SIZE,
+                                                  no_augmentation_sources=no_augmentation_sources)
+        val_generator = modellib.data_generator(val_dataset, self.config, shuffle=True,
+                                                batch_size=self.config.BATCH_SIZE)
 
         # Create log_dir if it does not exist
         if not os.path.exists(self.log_dir):
