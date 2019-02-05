@@ -1,6 +1,6 @@
 This repository is an unfinished project aiming to optimize the Mask-RCNN and deploy it on an embedded device. I used to have the following attemps but most haven't reached expected results.
 * A simple Android [demo](https://github.com/wozhouh/my-Mobile-Mask-RCNN/tree/master/android/my-android-demo) to measure the inference time on a mobile phone.
-* Supports for several light-weight backbone including MobileNet-v1/v2/Xception.
+* Supports for several light-weight backbones including MobileNet-v1/v2/Xception.
 * Trained [MobileNet-v1-based Mask-RCNN](https://drive.google.com/open?id=1ZYPQnES3uXXf5Zfr7BjzmzzMLxwHgoYw) but still has a large gap from the original ResNet-101-based one.
 * Supports for [light-head R-CNN](https://arxiv.org/abs/1711.07264) to deploy on Mask R-CNN.
 * [Mimic training](https://github.com/wozhouh/my-Mobile-Mask-RCNN/blob/master/optimization/mimicking.py) referring to [the paper](http://openaccess.thecvf.com/content_cvpr_2017/papers/Li_Mimicking_Very_Efficient_CVPR_2017_paper.pdf) in order to simplify the strong backbone to a smaller one, something like knowlege distilling.
