@@ -1,4 +1,4 @@
-This repository is an unfinished project aiming to optimize the Mask R-CNN and deploy it on an embedded device, which refers to [matterport](https://github.com/matterport/Mask_RCNN)'s and Gustavz[https://github.com/gustavz/Mobile_Mask_RCNN]'s projects. I used to have the following attemps but most haven't reached expected results.
+This repository is an unfinished project aiming to optimize the Mask R-CNN and deploy it on an embedded device, which refers to [matterport](https://github.com/matterport/Mask_RCNN)'s and [Gustavz](https://github.com/gustavz/Mobile_Mask_RCNN)'s projects. I used to have the following attemps but most haven't reached expected results.
 * A simple Android [demo](https://github.com/wozhouh/my-Mobile-Mask-RCNN/tree/master/android/my-android-demo) to measure the inference time on a mobile phone.
 * Supports for several light-weight backbones including MobileNet-v1/v2/Xception.
 * Trained [MobileNet-v1-based Mask-RCNN](https://drive.google.com/open?id=1ZYPQnES3uXXf5Zfr7BjzmzzMLxwHgoYw) but still has a large gap from the original ResNet-101-based one.
